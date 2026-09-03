@@ -1,0 +1,14 @@
+{
+  "name": "nemoido",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "export": "node scripts/export-freedao.mjs",
+    "import:dry": "node scripts/import-onchain.mjs",
+    "import:apply": "node scripts/import-onchain.mjs --apply"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "viem": "^2.31.7"
+  }
+}
