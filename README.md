@@ -90,3 +90,11 @@ IDO_ADDRESS=0x... RPC_URL=... PRIVATE_KEY=0x... \
 ## 安全
 
 见 [docs/SECURITY.md](docs/SECURITY.md)。第一期含单测、模糊、不变量与 Slither；主网部署前需独立审计。
+
+## Git 作者
+
+本仓库提交身份固定为 **`freedaocrypto <jackoelv@freedao.life>`**（[`.gitconfig`](.gitconfig)）。克隆后执行一次：
+
+```bash
+bash scripts/setup-git-author.sh
+```
