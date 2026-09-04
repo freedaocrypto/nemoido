@@ -61,12 +61,38 @@ const abi = parseAbi([
   "function importVolumes(address[] wallets, uint256[] selfVolumes, uint256[] teamVolumes)",
   "function freezeImport()",
   "function importFrozen() view returns (bool)",
-  "function getAccount(address) view returns (address referrer, bytes32 inviteCode, uint256 selfVolume, uint256 teamVolume, uint256 directRewards, uint256 teamRewards, uint256 claimed, bool registered)",
+  "function getAccount(address) view returns ((address referrer, bytes32 inviteCode, uint256 selfVolume, uint256 teamVolume, uint256 directRewards, uint256 teamRewards, uint256 claimed, bool registered))",
 ]);
 
 const transport = http(rpc);
 const wallet = createWalletClient({ account, chain, transport });
 const publicClient = createPublicClient({ chain, transport });
+
+function unpackAccount(acc) {
+  if (acc && typeof acc === "object" && acc.selfVolume !== undefined) {
+    return acc;
+  }
+  const [
+    referrer,
+    inviteCode,
+    selfVolume,
+    teamVolume,
+    directRewards,
+    teamRewards,
+    claimed,
+    registered,
+  ] = Array.isArray(acc) ? acc : [];
+  return {
+    referrer,
+    inviteCode,
+    selfVolume,
+    teamVolume,
+    directRewards,
+    teamRewards,
+    claimed,
+    registered,
+  };
+}
 
 async function send(functionName, args) {
   const hash = await wallet.writeContract({
@@ -82,47 +108,58 @@ async function send(functionName, args) {
   console.log(`${functionName} ${hash}`);
 }
 
-for (const batch of chunk(records, batchSize)) {
-  await send("importUsers", [
-    batch.map((r) => r.wallet),
-    batch.map((r) => codeToBytes32(r.inviteCode)),
-  ]);
-}
+const alreadyFrozen = await publicClient.readContract({
+  address: ido,
+  abi,
+  functionName: "importFrozen",
+});
 
-const withRef = records.filter((r) => r.referrer);
-for (const batch of chunk(withRef, batchSize)) {
-  await send("importReferrers", [
-    batch.map((r) => r.wallet),
-    batch.map((r) => r.referrer),
-  ]);
-}
+if (alreadyFrozen) {
+  console.log("import already frozen; skipping write txs, verifying on-chain state");
+} else {
+  for (const batch of chunk(records, batchSize)) {
+    await send("importUsers", [
+      batch.map((r) => r.wallet),
+      batch.map((r) => codeToBytes32(r.inviteCode)),
+    ]);
+  }
 
-const withVol = records.filter((r) => r.selfWei !== "0" || r.teamWei !== "0");
-for (const batch of chunk(withVol, batchSize)) {
-  await send("importVolumes", [
-    batch.map((r) => r.wallet),
-    batch.map((r) => BigInt(r.selfWei)),
-    batch.map((r) => BigInt(r.teamWei)),
-  ]);
-}
+  const withRef = records.filter((r) => r.referrer);
+  for (const batch of chunk(withRef, batchSize)) {
+    await send("importReferrers", [
+      batch.map((r) => r.wallet),
+      batch.map((r) => r.referrer),
+    ]);
+  }
 
-if (process.argv.includes("--freeze")) {
-  const frozen = await publicClient.readContract({ address: ido, abi, functionName: "importFrozen" });
-  if (!frozen) await send("freezeImport", []);
+  const withVol = records.filter((r) => r.selfWei !== "0" || r.teamWei !== "0");
+  for (const batch of chunk(withVol, batchSize)) {
+    await send("importVolumes", [
+      batch.map((r) => r.wallet),
+      batch.map((r) => BigInt(r.selfWei)),
+      batch.map((r) => BigInt(r.teamWei)),
+    ]);
+  }
+
+  if (process.argv.includes("--freeze")) {
+    await send("freezeImport", []);
+  }
 }
 
 const sample = records.slice(0, Math.min(5, records.length));
 for (const r of sample) {
-  const acc = await publicClient.readContract({
-    address: ido,
-    abi,
-    functionName: "getAccount",
-    args: [r.wallet],
-  });
+  const acc = unpackAccount(
+    await publicClient.readContract({
+      address: ido,
+      abi,
+      functionName: "getAccount",
+      args: [r.wallet],
+    }),
+  );
   console.log("verify", r.wallet, {
     registered: acc.registered,
-    self: acc.selfVolume.toString(),
-    team: acc.teamVolume.toString(),
+    self: acc.selfVolume?.toString?.() ?? String(acc.selfVolume),
+    team: acc.teamVolume?.toString?.() ?? String(acc.teamVolume),
     referrer: acc.referrer,
   });
 }

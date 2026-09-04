@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test} from "../lib/forge-std/src/Test.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
+import {NemoToken} from "../src/NemoToken.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
 contract NemoIdoHandler is Test {
@@ -100,6 +101,7 @@ contract NemoIdoHandler is Test {
 
 contract NemoIdoInvariantTest is Test {
     NemoIdo internal ido;
+    NemoToken internal nemo;
     MockUSDT internal usdt;
     NemoIdoHandler internal handler;
     address internal owner = address(this);
@@ -107,7 +109,11 @@ contract NemoIdoInvariantTest is Test {
 
     function setUp() public {
         usdt = new MockUSDT();
-        ido = new NemoIdo(address(usdt), owner);
+        uint64 nonce = vm.getNonce(address(this));
+        address predicted = vm.computeCreateAddress(address(this), nonce + 1);
+        nemo = new NemoToken(predicted, owner);
+        ido = new NemoIdo(address(usdt), address(nemo), owner);
+        require(address(ido) == predicted);
         ido.freezeImport();
         ido.openSale();
 
@@ -142,5 +148,15 @@ contract NemoIdoInvariantTest is Test {
 
     function invariant_treasuryPlusReservedEqBalance() public view {
         assertEq(ido.treasuryWithdrawable() + ido.reservedRewards(), usdt.balanceOf(address(ido)));
+    }
+
+    function invariant_nemoCapped() public view {
+        uint256 held;
+        for (uint256 i = 0; i < actors.length; i++) {
+            held += nemo.balanceOf(actors[i]);
+        }
+        held += nemo.balanceOf(address(ido));
+        assertLe(held, nemo.CAP());
+        assertEq(nemo.totalSupply(), nemo.CAP());
     }
 }

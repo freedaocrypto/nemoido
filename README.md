@@ -1,15 +1,19 @@
-# nemoido — NEMO IDO（BSC USDT 金库）
+# nemoido — nemokey IDO（BSC USDT 金库 + 预发凭证）
 
-第一期：BSC 上的 `$NEMO` IDO **USDT 金库合约**。只收 USDT、记账投入/身份、结算直推与团队极差，用户自行 `claim` USDT。**不铸造 NEMO**（代币仍按现站 `pending_ido` 后续发放）。
+BSC 上的 IDO：**USDT 金库**记账投入/身份、结算直推与团队极差；入金时立刻发放 **nemokey** 预发凭证（ticker `NEMOKEY`，总量 5 亿，18 位）。用户 `claim()` 仍只领 **USDT 返利**。正式币上线后按持仓比例映射，本期不做兑换/空投合约。
 
-仓库：独立 Foundry 项目。网站整合（FreeDao `life_sol`）为第二期。
+仓库：独立 Foundry 项目。网站整合（FreeDao）为第二期。
 
 ## 规则（默认，管理员可改）
 
 | 项 | 默认 |
 |----|------|
+| nemokey 总量 | 5 亿，构造时一次 mint 给 IDO |
+| 周 1 基准 | 100 NEMOKEY = 1 USDT（`baseTokensPer100 = 10000e18`） |
+| 周递减 | 每过一周，每 100U 少发 **20** 枚（周 2 = 9980），不是百分比 |
+| 大额加送 | **本笔** ≥ 1000U 整笔 +2%；拆成多笔 100U **拿不到** |
 | 直推 | 10%（推荐人本人 ≥ 100U 大使） |
-| 入金 &lt; 100U | 计入业绩，**无**直推/团队奖 |
+| 入金 &lt; 100U | 计入业绩，**无**直推/团队奖；nemokey 仍按 quote 发放 |
 | 身份 | 探索者 &lt;100 / 大使 ≥100 / 合伙人 ≥1000 / 共建者业绩口径：本人≥1000 且伞下≥3万 |
 | 团队极差 | 伞下 3000U→3%，10000U→6%，30000U→9% |
 | 叠加 | 直推 10% + 团队极差 |
@@ -17,7 +21,7 @@
 
 极差：先把本笔记入整条上级 `teamVolume`，再从直推人往上按档位差额发放。例：我 9%、下级 6% → 该下级伞下的达标入金，下级拿 6%，我拿 3%。
 
-历史数据只导入地址、邀请码、邀请关系、已确认业绩，**不补发**奖励。直推 + 最高团队档合计不超过 100%，避免准备金被参数改穿。
+nemokey 与 USDT 返利分开：`quote(amount)` 按 `openSale()` 写入的 `saleOpenedAt` 算周序号，再按本笔是否 ≥1000U 加送。历史导入仍**不补发** USDT 奖励，也**不发** nemokey。直推 + 最高团队档合计不超过 100%，避免准备金被参数改穿。
 
 ## 命令
 
@@ -33,7 +37,7 @@ forge fmt
 # 本地 Anvil（另开终端）
 anvil --chain-id 31337
 bash scripts/local-up.sh
-# 部署 MockUSDT + NemoIdo，种根邀请码 ROOTANVL
+# 部署 MockUSDT + NemoToken + NemoIdo，种根邀请码 ROOTANVL
 ```
 
 BSC 部署（第二期/主网前再执行）：
@@ -70,10 +74,11 @@ IDO_ADDRESS=0x... RPC_URL=... PRIVATE_KEY=0x... \
 ## 合约入口
 
 - `register(code, referrerCode)` / `bindReferrer(referrerCode)`（仅未绑定）
-- `contribute(amount)` / `registerAndContribute`
-- `claim()`
-- 管理员：`freezeImport`、`openSale`、`closeSale`、`pause`、参数 setter、`withdrawTreasury`（不能抽走 `reservedRewards`）
-- 导入：`importUsers` / `importReferrers` / `importVolumes`
+- `contribute(amount)` / `registerAndContribute`（入金后立刻转 nemokey）
+- `quote(amount)` / `currentWeek()` / `tokensPer100(week)`
+- `claim()`（只领 USDT 返利）
+- 管理员：`freezeImport`、`openSale`、`closeSale`、`pause`、参数 setter、`setNemoSchedule` / `setNemoBonus`、`withdrawTreasury`（不能抽走 `reservedRewards`）、`withdrawUnsoldNemo`
+- 导入：`importUsers` / `importReferrers` / `importVolumes`（不发 nemokey）
 
 邀请码：1–32 位大写字母或数字，链上 `bytes32` ASCII 左对齐。兼容现站 8 位码与本地 `ROOTANVL`。
 

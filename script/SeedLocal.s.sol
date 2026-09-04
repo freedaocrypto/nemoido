@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Script, console2} from "forge-std/Script.sol";
+import {Script, console2} from "../lib/forge-std/src/Script.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
 
 /// @notice Freeze import, open sale, register the broadcaster as ROOTANVL.

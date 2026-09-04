@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test} from "../../lib/forge-std/src/Test.sol";
 import {NemoIdo} from "../../src/NemoIdo.sol";
+import {NemoToken} from "../../src/NemoToken.sol";
 import {MockUSDT} from "../../src/MockUSDT.sol";
 
 contract NemoIdoBase is Test {
     uint256 internal constant UNIT = 1e18;
 
     MockUSDT internal usdt;
+    NemoToken internal nemo;
     NemoIdo internal ido;
 
     address internal owner = makeAddr("owner");
@@ -20,12 +22,22 @@ contract NemoIdoBase is Test {
 
     function setUp() public virtual {
         usdt = new MockUSDT();
-        ido = new NemoIdo(address(usdt), owner);
+        (ido, nemo) = _deployPair(address(usdt));
         _mintApprove(alice, 1_000_000 * UNIT);
         _mintApprove(bob, 1_000_000 * UNIT);
         _mintApprove(carol, 1_000_000 * UNIT);
         _mintApprove(dave, 1_000_000 * UNIT);
         _mintApprove(eve, 1_000_000 * UNIT);
+    }
+
+    function _deployPair(
+        address usdtToken
+    ) internal returns (NemoIdo vault, NemoToken token) {
+        uint64 nonce = vm.getNonce(address(this));
+        address predicted = vm.computeCreateAddress(address(this), nonce + 1);
+        token = new NemoToken(predicted, owner);
+        vault = new NemoIdo(usdtToken, address(token), owner);
+        require(address(vault) == predicted, "ido pred");
     }
 
     function _mintApprove(
