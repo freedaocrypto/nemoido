@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Script, console2} from "forge-std/Script.sol";
+import {Script, console2} from "../lib/forge-std/src/Script.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
+import {NemoToken} from "../src/NemoToken.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
 
-/// @notice Local Anvil deploy: MockUSDT + NemoIdo, mint 1M USDT to #0–#3.
+/// @notice Local Anvil deploy: MockUSDT + NemoToken (500m to IDO) + NemoIdo.
 contract DeployLocal is Script {
     function run() external {
         uint256 pk =
@@ -23,10 +24,13 @@ contract DeployLocal is Script {
         for (uint256 i = 0; i < users.length; i++) {
             usdt.mint(users[i], 1_000_000e18);
         }
-        NemoIdo ido = new NemoIdo(address(usdt), deployer);
+        NemoToken nemo = new NemoToken(deployer, deployer);
+        NemoIdo ido = new NemoIdo(address(usdt), address(nemo), deployer);
+        nemo.transfer(address(ido), nemo.CAP());
         vm.stopBroadcast();
 
         console2.log("USDT", address(usdt));
+        console2.log("NEMOKEY", address(nemo));
         console2.log("NemoIdo", address(ido));
         console2.log("owner", deployer);
     }

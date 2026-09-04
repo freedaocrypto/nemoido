@@ -17,7 +17,7 @@ fi
 
 bash "$ROOT/scripts/install-deps.sh"
 
-echo "==> Deploy MockUSDT + NemoIdo"
+echo "==> Deploy MockUSDT + NemoToken + NemoIdo"
 forge script script/DeployLocal.s.sol:DeployLocal \
   --rpc-url "$RPC" --private-key "$PK" --broadcast -vv
 
@@ -34,6 +34,7 @@ data = json.load(open(path))
 txs = data.get("transactions") or []
 ido = None
 usdt = None
+nemo = None
 for t in txs:
     name = (t.get("contractName") or "")
     addr = t.get("contractAddress")
@@ -41,9 +42,13 @@ for t in txs:
         ido = addr
     if name == "MockUSDT":
         usdt = addr
+    if name == "NemoToken":
+        nemo = addr
 print(ido or "")
 if usdt:
     sys.stderr.write(f"USDT {usdt}\n")
+if nemo:
+    sys.stderr.write(f"NEMOKEY {nemo}\n")
 PY
 )"
 

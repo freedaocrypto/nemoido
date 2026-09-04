@@ -1,15 +1,19 @@
 # NemoIdo 安全说明（第一期）
 
-范围：`src/NemoIdo.sol` USDT 金库。不铸造 NEMO，不涉及网站鉴权。
+范围：`src/NemoIdo.sol` USDT 金库 + `src/NemoToken.sol` 预发凭证。正式币映射/空投不在本期。不涉及网站鉴权。
 
 ## 设计约束
 
 - Solidity 0.8.28，CEI + `ReentrancyGuard` + `SafeERC20`
+- nemokey（ticker NEMOKEY）总量固定 5 亿，构造时一次 mint，之后不再增发
+- 入金时从 IDO 余额 `safeTransfer` 凭证；余额不足则 `InsufficientNemo`，整笔交易 revert（含已 pull 的 USDT）
+- `NemoToken.pause` 可紧急停转；`rescue` 不能抽走本代币（`RescueSelf`）
 - 邀请链深度上限（默认 64，最大 128）
 - 直推 bps + 最高团队档 ≤ 100%，避免单笔奖励超过入金
 - `withdrawTreasury` 只能抽取 `balance - (totalAccrued - totalClaimed)`
-- `import*` 仅 owner，且 `freezeImport` 后不可再写历史业绩
-- `openSale` 必须已冻结导入
+- `withdrawUnsoldNemo` 只能抽 IDO 持有的未售凭证，不能动用户钱包
+- `import*` 仅 owner，且 `freezeImport` 后不可再写历史业绩；导入不发 nemokey
+- `openSale` 必须已冻结导入；`saleOpenedAt` 只在首次开售写入，避免改周序
 - 拒绝直接转入 ETH
 - Ownable2Step 转移所有权
 
@@ -27,13 +31,14 @@ forge test --match-contract NemoIdoInvariant
 node --test scripts/lib/tree.test.mjs
 ```
 
-覆盖：&lt;100U 无推广奖、直推 10%、3/6/9 极差、下级 6% 上级只拿 3%、未达大使不占档、导入不发奖、暂停、准备金不可抽空、自邀/成环、重入。
+覆盖：&lt;100U 无推广奖、直推 10%、3/6/9 极差、下级 6% 上级只拿 3%、未达大使不占档、导入不发奖/不发 nemokey、周 1 的 100U/1000U、跨周 9980、999U 无加送、拆单无加送、暂停、准备金不可抽空、自邀/成环、重入、nemokey 发完 revert。
 
 不变量：
 
 - `reservedRewards() <= USDT.balanceOf(ido)`
 - `sum(pendingOf(users)) == reservedRewards()`
 - `treasuryWithdrawable() + reservedRewards() == balance`
+- `sum(nemo.balanceOf(users)) + ido.nemoBalance <= 5e8e18` 且 `totalSupply == CAP`
 
 ## Slither
 

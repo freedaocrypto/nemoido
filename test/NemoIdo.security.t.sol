@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {NemoIdoBase} from "./helpers/NemoIdoBase.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
 
@@ -121,7 +121,8 @@ contract NemoIdoSecurityTest is NemoIdoBase {
 
     function test_reentrancyOnClaimBlocked() public {
         ReentrantUSDT token = new ReentrantUSDT();
-        NemoIdo vault = new NemoIdo(address(token), owner);
+        NemoIdo vault;
+        (vault,) = _deployPair(address(token));
         token.setTarget(vault);
         token.mint(alice, 10_000 * UNIT);
         token.mint(bob, 10_000 * UNIT);
@@ -152,7 +153,8 @@ contract NemoIdoSecurityTest is NemoIdoBase {
 
     function test_reentrancyOnContributeBlocked() public {
         ReentrantUSDT token = new ReentrantUSDT();
-        NemoIdo vault = new NemoIdo(address(token), owner);
+        NemoIdo vault;
+        (vault,) = _deployPair(address(token));
         token.setTarget(vault);
         token.mint(alice, 10_000 * UNIT);
         vm.prank(alice);

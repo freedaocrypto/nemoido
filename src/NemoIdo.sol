@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {Ownable2Step} from "../lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
+import {Pausable} from "../lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title NemoIdo
 /// @notice BSC USDT IDO vault: records contribution / identity, accrues direct + team
-///         differential rewards in USDT. Does not mint NEMO.
+///         differential rewards in USDT, and pays pre-issue nemokey vouchers on contribute.
 contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant TIER_COUNT = 3;
+    uint256 public constant USDT_UNIT_100 = 100e18;
 
     enum Role {
         None,
@@ -37,9 +38,18 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     IERC20 public immutable usdt;
+    IERC20 public immutable nemo;
 
     bool public importFrozen;
     bool public saleOpen;
+    uint256 public saleOpenedAt;
+
+    uint256 public baseTokensPer100 = 10_000e18;
+    uint256 public weeklyDecayAbs = 20e18;
+    uint256 public weekDuration = 7 days;
+    uint256 public minTokensPer100;
+    uint256 public nemoBonusThreshold = 1000e18;
+    uint256 public nemoBonusBps = 200;
 
     uint256 public minIdo = 1e18;
     uint256 public minReferralAmount = 100e18;
@@ -58,10 +68,14 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public totalAccrued;
     uint256 public totalClaimed;
     uint256 public totalContributed;
+    uint256 public totalNemoAllocated;
 
     event Registered(address indexed account, bytes32 indexed code, address indexed referrer);
     event ReferrerBound(address indexed account, address indexed referrer);
-    event Contributed(address indexed account, uint256 amount, uint256 selfVolume, uint256 teamVolume);
+    event Contributed(
+        address indexed account, uint256 amount, uint256 selfVolume, uint256 teamVolume, uint256 nemoAmount
+    );
+    event NemoAllocated(address indexed account, uint256 nemoAmount);
     event DirectRewardAccrued(address indexed referrer, address indexed from, uint256 amount);
     event TeamRewardAccrued(address indexed beneficiary, address indexed from, uint256 amount, uint256 bps);
     event Claimed(address indexed account, uint256 amount);
@@ -78,6 +92,11 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     event IdentityThresholdsUpdated(uint256 ambassadorMin, uint256 partnerMin, uint256 coBuilderTeamMin);
     event TeamTiersUpdated(uint256[3] volumes, uint256[3] bps);
     event MaxReferralDepthUpdated(uint256 depth);
+    event NemoScheduleUpdated(
+        uint256 baseTokensPer100, uint256 weeklyDecayAbs, uint256 weekDuration, uint256 minTokensPer100
+    );
+    event NemoBonusUpdated(uint256 threshold, uint256 bps);
+    event UnsoldNemoWithdrawn(address indexed to, uint256 amount);
 
     error NotRegistered();
     error AlreadyRegistered();
@@ -100,13 +119,17 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     error InvalidThresholds();
     error RewardBpsTooHigh();
     error ZeroDepth();
+    error InsufficientNemo();
+    error InvalidSchedule();
 
     constructor(
         address usdt_,
+        address nemo_,
         address initialOwner
     ) Ownable(initialOwner) {
-        if (usdt_ == address(0) || initialOwner == address(0)) revert ZeroAddress();
+        if (usdt_ == address(0) || nemo_ == address(0) || initialOwner == address(0)) revert ZeroAddress();
         usdt = IERC20(usdt_);
+        nemo = IERC20(nemo_);
         teamTierVolume = [uint256(3000e18), 10_000e18, 30_000e18];
         teamTierBps = [uint256(300), 600, 900];
     }
@@ -173,6 +196,33 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         return (teamTierVolume, teamTierBps);
     }
 
+    function currentWeek() public view returns (uint256) {
+        if (saleOpenedAt == 0 || block.timestamp < saleOpenedAt) return 0;
+        return (block.timestamp - saleOpenedAt) / weekDuration;
+    }
+
+    function tokensPer100(
+        uint256 week
+    ) public view returns (uint256) {
+        uint256 decay = weeklyDecayAbs * week;
+        if (decay >= baseTokensPer100) return minTokensPer100;
+        uint256 per100 = baseTokensPer100 - decay;
+        if (per100 < minTokensPer100) return minTokensPer100;
+        return per100;
+    }
+
+    /// @notice nemokey voucher amount for a USDT contribution at the current week.
+    function quote(
+        uint256 amount
+    ) public view returns (uint256) {
+        uint256 per100 = tokensPer100(currentWeek());
+        uint256 nemoAmount = (amount * per100 + USDT_UNIT_100 - 1) / USDT_UNIT_100;
+        if (amount >= nemoBonusThreshold && nemoBonusBps > 0) {
+            nemoAmount = (nemoAmount * (BPS_DENOMINATOR + nemoBonusBps)) / BPS_DENOMINATOR;
+        }
+        return nemoAmount;
+    }
+
     // -------------------------------------------------------------------------
     // User actions
     // -------------------------------------------------------------------------
@@ -234,6 +284,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     function openSale() external onlyOwner {
         if (!importFrozen) revert ImportNotFrozenError();
         saleOpen = true;
+        if (saleOpenedAt == 0) {
+            saleOpenedAt = block.timestamp;
+        }
         emit SaleOpened();
     }
 
@@ -258,6 +311,16 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         if (amount == 0 || amount > treasuryWithdrawable()) revert InsufficientTreasury();
         usdt.safeTransfer(to, amount);
         emit TreasuryWithdrawn(to, amount);
+    }
+
+    function withdrawUnsoldNemo(
+        address to,
+        uint256 amount
+    ) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0 || amount > nemo.balanceOf(address(this))) revert InsufficientNemo();
+        nemo.safeTransfer(to, amount);
+        emit UnsoldNemoWithdrawn(to, amount);
     }
 
     // -------------------------------------------------------------------------
@@ -320,6 +383,31 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         if (depth > 128) revert DepthExceeded();
         maxReferralDepth = depth;
         emit MaxReferralDepthUpdated(depth);
+    }
+
+    function setNemoSchedule(
+        uint256 baseTokensPer100_,
+        uint256 weeklyDecayAbs_,
+        uint256 weekDuration_,
+        uint256 minTokensPer100_
+    ) external onlyOwner {
+        if (baseTokensPer100_ == 0 || weekDuration_ == 0) revert InvalidSchedule();
+        if (minTokensPer100_ > baseTokensPer100_) revert InvalidSchedule();
+        baseTokensPer100 = baseTokensPer100_;
+        weeklyDecayAbs = weeklyDecayAbs_;
+        weekDuration = weekDuration_;
+        minTokensPer100 = minTokensPer100_;
+        emit NemoScheduleUpdated(baseTokensPer100_, weeklyDecayAbs_, weekDuration_, minTokensPer100_);
+    }
+
+    function setNemoBonus(
+        uint256 threshold,
+        uint256 bps
+    ) external onlyOwner {
+        if (threshold == 0 || bps > BPS_DENOMINATOR) revert InvalidSchedule();
+        nemoBonusThreshold = threshold;
+        nemoBonusBps = bps;
+        emit NemoBonusUpdated(threshold, bps);
     }
 
     // -------------------------------------------------------------------------
@@ -476,7 +564,15 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
             _settleTeam(account, amount);
         }
 
-        emit Contributed(account, amount, accounts[account].selfVolume, accounts[account].teamVolume);
+        uint256 nemoAmount = quote(amount);
+        if (nemoAmount > nemo.balanceOf(address(this))) revert InsufficientNemo();
+        if (nemoAmount > 0) {
+            nemo.safeTransfer(account, nemoAmount);
+            totalNemoAllocated += nemoAmount;
+            emit NemoAllocated(account, nemoAmount);
+        }
+
+        emit Contributed(account, amount, accounts[account].selfVolume, accounts[account].teamVolume, nemoAmount);
     }
 
     function _bumpAncestorTeam(
