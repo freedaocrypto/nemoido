@@ -12,6 +12,7 @@
 - 邀请树：1 根 + 8 KOL + 24 团长 + 240 大使 + 2400 叶子（共 2673 人注册；其余 327 人只持币未注册）
 - 入金：KOL/团长 1000U，大使 100U，叶子混杂 50 / 100 / 1000U
 - 出块：每笔 `contribute` 后 `vm.roll(+1)`，每 30 块 nemokey 少发 20 枚/100U
+- 金库：`treasuryWithdrawable` 每达到 **5000U**，Admin 立刻 `withdrawTreasury` 抽走当时全部可提现额
 - 停止条件：至少 3 个共建者，且出现一笔 3%/6%/9% 三段极差
 
 ### 开售（尚无入金）
@@ -27,6 +28,7 @@
 | reservedRewards (U) | 0 |
 | 共建者人数（根+8 KOL） | 0 |
 | 已入金笔数 | 0 |
+| Admin 累计抽走 (U) | 0 |
 
 ### 第一个共建者出现
 
@@ -36,11 +38,12 @@
 | currentWeek | 1 |
 | tokensPer100 (枚/100U) | 9980 |
 | 累计入金 (U) | 31000 |
-| 合约 USDT 余额 (U) | 31000 |
-| treasuryWithdrawable (U) | 26500 |
+| 合约 USDT 余额 (U) | 5310 |
+| treasuryWithdrawable (U) | 810 |
 | reservedRewards (U) | 4500 |
 | 共建者人数（根+8 KOL） | 1 |
 | 已入金笔数 | 31 |
+| Admin 累计抽走 (U) | 25690 |
 
 ### 身份波结束（根/KOL/团长 1000U，大使 100U）
 
@@ -50,11 +53,12 @@
 | currentWeek | 9 |
 | tokensPer100 (枚/100U) | 9820 |
 | 累计入金 (U) | 57000 |
-| 合约 USDT 余额 (U) | 57000 |
-| treasuryWithdrawable (U) | 47560 |
+| 合约 USDT 余额 (U) | 11222 |
+| treasuryWithdrawable (U) | 1782 |
 | reservedRewards (U) | 9440 |
 | 共建者人数（根+8 KOL） | 1 |
 | 已入金笔数 | 273 |
+| Admin 累计抽走 (U) | 45778 |
 
 ### 第一笔三段极差（3% / 6% / 9%）
 
@@ -64,11 +68,12 @@
 | currentWeek | 11 |
 | tokensPer100 (枚/100U) | 9780 |
 | 累计入金 (U) | 81200 |
-| 合约 USDT 余额 (U) | 81200 |
-| treasuryWithdrawable (U) | 67352 |
+| 合约 USDT 余额 (U) | 18403 |
+| treasuryWithdrawable (U) | 4555 |
 | reservedRewards (U) | 13848 |
 | 共建者人数（根+8 KOL） | 2 |
 | 已入金笔数 | 336 |
+| Admin 累计抽走 (U) | 62797 |
 
 ### 第一阶段暂停（共建者 >= 3 且已出现三段极差）
 
@@ -78,11 +83,12 @@
 | currentWeek | 21 |
 | tokensPer100 (枚/100U) | 9580 |
 | 累计入金 (U) | 187150 |
-| 合约 USDT 余额 (U) | 187150 |
-| treasuryWithdrawable (U) | 154131 |
+| 合约 USDT 余额 (U) | 34639 |
+| treasuryWithdrawable (U) | 1620 |
 | reservedRewards (U) | 33019 |
 | 共建者人数（根+8 KOL） | 3 |
 | 已入金笔数 | 636 |
+| Admin 累计抽走 (U) | 152511 |
 
 ## 共建者名单（根 + 8 个 KOL）
 

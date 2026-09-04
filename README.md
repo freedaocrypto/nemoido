@@ -32,6 +32,7 @@ nemokey 与 USDT 返利分开：`quote(amount)` 按 `openSale()` 写入的 `sale
 ```bash
 forge test --match-contract SimMarket -vvv
 # 报告：docs/localdev-sim-report.md
+# 提现报告：docs/localdev-sim-claim-report.md
 ```
 
 ## 命令
