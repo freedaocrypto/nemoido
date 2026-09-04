@@ -11,6 +11,14 @@ import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/uti
 /// @title NemoIdo
 /// @notice BSC USDT IDO vault: records contribution / identity, accrues direct + team
 ///         differential rewards in USDT, and pays pre-issue nemokey vouchers on contribute.
+///
+/// @dev LOCALDEV BRANCH — DO NOT DEPLOY TO MAINNET.
+///      `weekDuration` is 30 BLOCKS (not 7 days) so forge/Anvil sims can advance
+///      a "week" by mining 30 blocks (one contribute ≈ one block).
+///      MAINNET MUST restore:
+///        - `weekDuration = 7 days`
+///        - `currentWeek()` using `block.timestamp` / `saleOpenedAt`
+///        - remove the `block.chainid == 56` constructor guard
 contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -43,10 +51,13 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     bool public importFrozen;
     bool public saleOpen;
     uint256 public saleOpenedAt;
+    /// @dev LOCALDEV: first `openSale` block. Mainnet week math should ignore this.
+    uint256 public saleOpenedBlock;
 
     uint256 public baseTokensPer100 = 10_000e18;
     uint256 public weeklyDecayAbs = 20e18;
-    uint256 public weekDuration = 7 days;
+    /// @dev LOCALDEV ONLY: 30 blocks per "week". MAINNET MUST set `7 days`.
+    uint256 public weekDuration = 30;
     uint256 public minTokensPer100;
     uint256 public nemoBonusThreshold = 1000e18;
     uint256 public nemoBonusBps = 200;
@@ -121,12 +132,15 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     error ZeroDepth();
     error InsufficientNemo();
     error InvalidSchedule();
+    error LocaldevNotForMainnet();
 
     constructor(
         address usdt_,
         address nemo_,
         address initialOwner
     ) Ownable(initialOwner) {
+        // LOCALDEV: refuse BSC mainnet so this branch cannot be broadcast there.
+        if (block.chainid == 56) revert LocaldevNotForMainnet();
         if (usdt_ == address(0) || nemo_ == address(0) || initialOwner == address(0)) revert ZeroAddress();
         usdt = IERC20(usdt_);
         nemo = IERC20(nemo_);
@@ -196,9 +210,12 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         return (teamTierVolume, teamTierBps);
     }
 
+    /// @dev LOCALDEV: week index from block height. MAINNET MUST use timestamp:
+    ///      `if (saleOpenedAt == 0 || block.timestamp < saleOpenedAt) return 0;`
+    ///      `return (block.timestamp - saleOpenedAt) / weekDuration;`
     function currentWeek() public view returns (uint256) {
-        if (saleOpenedAt == 0 || block.timestamp < saleOpenedAt) return 0;
-        return (block.timestamp - saleOpenedAt) / weekDuration;
+        if (saleOpenedBlock == 0 || block.number < saleOpenedBlock) return 0;
+        return (block.number - saleOpenedBlock) / weekDuration;
     }
 
     function tokensPer100(
@@ -286,6 +303,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         saleOpen = true;
         if (saleOpenedAt == 0) {
             saleOpenedAt = block.timestamp;
+            saleOpenedBlock = block.number;
         }
         emit SaleOpened();
     }
@@ -391,6 +409,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 weekDuration_,
         uint256 minTokensPer100_
     ) external onlyOwner {
+        // LOCALDEV: `weekDuration_` is in blocks. MAINNET MUST pass seconds (`7 days`).
         if (baseTokensPer100_ == 0 || weekDuration_ == 0) revert InvalidSchedule();
         if (minTokensPer100_ > baseTokensPer100_) revert InvalidSchedule();
         baseTokensPer100 = baseTokensPer100_;
