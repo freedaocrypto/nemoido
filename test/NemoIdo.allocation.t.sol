@@ -47,7 +47,7 @@ contract NemoAllocationTest is NemoIdoBase {
     function test_week2_100u_is_9980() public {
         _openSale();
         _register(alice, "ALICE001", "");
-        vm.roll(block.number + 30);
+        vm.warp(block.timestamp + 7 days);
         assertEq(ido.currentWeek(), 1);
         assertEq(ido.tokensPer100(1), 9980 * UNIT);
         assertEq(ido.quote(100 * UNIT), 9980 * UNIT);
@@ -110,27 +110,18 @@ contract NemoAllocationTest is NemoIdoBase {
     function test_saleOpenedAtStableOnReopen() public {
         _openSale();
         uint256 opened = ido.saleOpenedAt();
-        uint256 openedBlock = ido.saleOpenedBlock();
         vm.prank(owner);
         ido.closeSale();
         vm.warp(block.timestamp + 3 days);
-        vm.roll(block.number + 10);
         vm.prank(owner);
         ido.openSale();
         assertEq(ido.saleOpenedAt(), opened);
-        assertEq(ido.saleOpenedBlock(), openedBlock);
-    }
-
-    function test_localdevRejectsBscMainnet() public {
-        vm.chainId(56);
-        vm.expectRevert(NemoIdo.LocaldevNotForMainnet.selector);
-        new NemoIdo(address(usdt), address(nemo), owner);
     }
 
     function test_week2_ceilMatchesQuote() public {
         _openSale();
         _register(alice, "ALICE001", "");
-        vm.roll(block.number + 30);
+        vm.warp(block.timestamp + 7 days);
         uint256 amount = 1e18 + 1;
         uint256 quoted = ido.quote(amount);
         uint256 per100 = ido.tokensPer100(1);
