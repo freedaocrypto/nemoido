@@ -5,7 +5,9 @@
   "scripts": {
     "export": "node scripts/export-freedao.mjs",
     "import:dry": "node scripts/import-onchain.mjs",
-    "import:apply": "node scripts/import-onchain.mjs --apply"
+    "import:apply": "node scripts/import-onchain.mjs --apply",
+    "test:js": "node --test scripts/lib/*.test.mjs",
+    "scale:anvil": "node scripts/scale-anvil.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",

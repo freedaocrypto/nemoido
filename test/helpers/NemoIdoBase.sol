@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {Test} from "../../lib/forge-std/src/Test.sol";
 import {NemoIdo} from "../../src/NemoIdo.sol";
 import {NemoToken} from "../../src/NemoToken.sol";
+import {NemoNFT} from "../../src/NemoNFT.sol";
+import {NemoNetworks} from "../../src/network/NemoNetworks.sol";
 import {MockUSDT} from "../../src/MockUSDT.sol";
 
 contract NemoIdoBase is Test {
@@ -11,6 +13,7 @@ contract NemoIdoBase is Test {
 
     MockUSDT internal usdt;
     NemoToken internal nemo;
+    NemoNFT internal nft;
     NemoIdo internal ido;
 
     address internal owner = makeAddr("owner");
@@ -33,11 +36,13 @@ contract NemoIdoBase is Test {
     function _deployPair(
         address usdtToken
     ) internal returns (NemoIdo vault, NemoToken token) {
-        uint64 nonce = vm.getNonce(address(this));
-        address predicted = vm.computeCreateAddress(address(this), nonce + 1);
-        token = new NemoToken(predicted, owner);
-        vault = new NemoIdo(usdtToken, address(token), owner);
-        require(address(vault) == predicted, "ido pred");
+        token = new NemoToken(owner);
+        nft = new NemoNFT(owner);
+        vault = new NemoIdo(usdtToken, address(token), address(nft), owner, NemoNetworks.local());
+        vm.startPrank(owner);
+        token.setMinter(address(vault));
+        nft.setMinter(address(vault));
+        vm.stopPrank();
     }
 
     function _mintApprove(
@@ -53,9 +58,10 @@ contract NemoIdoBase is Test {
         string memory s
     ) internal pure returns (bytes32 out) {
         bytes memory b = bytes(s);
-        require(b.length > 0 && b.length <= 32, "code");
-        assembly {
-            out := mload(add(b, 32))
+        uint256 len = b.length;
+        require(len > 0 && len <= 32, "code");
+        for (uint256 i = 0; i < len; ++i) {
+            out |= bytes32(uint256(uint8(b[i]))) << (8 * (31 - i));
         }
     }
 
@@ -71,8 +77,10 @@ contract NemoIdoBase is Test {
         string memory code,
         string memory referrerCode
     ) internal {
+        bytes32 invite = _code(code);
+        bytes32 referrer = bytes(referrerCode).length == 0 ? bytes32(0) : _code(referrerCode);
         vm.prank(who);
-        ido.register(_code(code), bytes(referrerCode).length == 0 ? bytes32(0) : _code(referrerCode));
+        ido.register(invite, referrer);
     }
 
     function _contribute(
@@ -86,28 +94,13 @@ contract NemoIdoBase is Test {
     function _self(
         address who
     ) internal view returns (uint256) {
-        (,, uint256 selfVolume,,,,,) = ido.accounts(who);
-        return selfVolume;
-    }
-
-    function _team(
-        address who
-    ) internal view returns (uint256) {
-        (,,, uint256 teamVolume,,,,) = ido.accounts(who);
-        return teamVolume;
+        return ido.getAccount(who).selfVolume;
     }
 
     function _direct(
         address who
     ) internal view returns (uint256) {
-        (,,,, uint256 directRewards,,,) = ido.accounts(who);
-        return directRewards;
+        return ido.getAccount(who).directRewards;
     }
 
-    function _teamRewards(
-        address who
-    ) internal view returns (uint256) {
-        (,,,,, uint256 teamRewards,,) = ido.accounts(who);
-        return teamRewards;
-    }
 }

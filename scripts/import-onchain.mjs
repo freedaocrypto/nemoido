@@ -58,10 +58,10 @@ const chain = {
 const abi = parseAbi([
   "function importUsers(address[] wallets, bytes32[] codes)",
   "function importReferrers(address[] wallets, address[] referrers)",
-  "function importVolumes(address[] wallets, uint256[] selfVolumes, uint256[] teamVolumes)",
+  "function importVolumes(address[] wallets, uint256[] selfVolumes)",
   "function freezeImport()",
   "function importFrozen() view returns (bool)",
-  "function getAccount(address) view returns ((address referrer, bytes32 inviteCode, uint256 selfVolume, uint256 teamVolume, uint256 directRewards, uint256 teamRewards, uint256 claimed, bool registered))",
+  "function getAccount(address) view returns ((address referrer, bytes32 inviteCode, uint256 selfVolume, uint256 directRewards, uint256 claimed, bool registered))",
 ]);
 
 const transport = http(rpc);
@@ -69,29 +69,11 @@ const wallet = createWalletClient({ account, chain, transport });
 const publicClient = createPublicClient({ chain, transport });
 
 function unpackAccount(acc) {
-  if (acc && typeof acc === "object" && acc.selfVolume !== undefined) {
+  if (acc && typeof acc === "object" && acc.selfVolume !== undefined && !Array.isArray(acc)) {
     return acc;
   }
-  const [
-    referrer,
-    inviteCode,
-    selfVolume,
-    teamVolume,
-    directRewards,
-    teamRewards,
-    claimed,
-    registered,
-  ] = Array.isArray(acc) ? acc : [];
-  return {
-    referrer,
-    inviteCode,
-    selfVolume,
-    teamVolume,
-    directRewards,
-    teamRewards,
-    claimed,
-    registered,
-  };
+  const [referrer, inviteCode, selfVolume, directRewards, claimed, registered] = Array.isArray(acc) ? acc : [];
+  return { referrer, inviteCode, selfVolume, directRewards, claimed, registered };
 }
 
 async function send(functionName, args) {
@@ -132,13 +114,9 @@ if (alreadyFrozen) {
     ]);
   }
 
-  const withVol = records.filter((r) => r.selfWei !== "0" || r.teamWei !== "0");
+  const withVol = records.filter((r) => r.selfWei !== "0");
   for (const batch of chunk(withVol, batchSize)) {
-    await send("importVolumes", [
-      batch.map((r) => r.wallet),
-      batch.map((r) => BigInt(r.selfWei)),
-      batch.map((r) => BigInt(r.teamWei)),
-    ]);
+    await send("importVolumes", [batch.map((r) => r.wallet), batch.map((r) => BigInt(r.selfWei))]);
   }
 
   if (process.argv.includes("--freeze")) {
@@ -159,7 +137,6 @@ for (const r of sample) {
   console.log("verify", r.wallet, {
     registered: acc.registered,
     self: acc.selfVolume?.toString?.() ?? String(acc.selfVolume),
-    team: acc.teamVolume?.toString?.() ?? String(acc.teamVolume),
     referrer: acc.referrer,
   });
 }

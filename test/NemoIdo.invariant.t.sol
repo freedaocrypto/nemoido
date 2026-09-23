@@ -3,7 +3,9 @@ pragma solidity ^0.8.28;
 
 import {Test} from "../lib/forge-std/src/Test.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
+import {NemoNetworks} from "../src/network/NemoNetworks.sol";
 import {NemoToken} from "../src/NemoToken.sol";
+import {NemoNFT} from "../src/NemoNFT.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
 contract NemoIdoHandler is Test {
@@ -109,11 +111,11 @@ contract NemoIdoInvariantTest is Test {
 
     function setUp() public {
         usdt = new MockUSDT();
-        uint64 nonce = vm.getNonce(address(this));
-        address predicted = vm.computeCreateAddress(address(this), nonce + 1);
-        nemo = new NemoToken(predicted, owner);
-        ido = new NemoIdo(address(usdt), address(nemo), owner);
-        require(address(ido) == predicted);
+        nemo = new NemoToken(owner);
+        NemoNFT pass = new NemoNFT(owner);
+        ido = new NemoIdo(address(usdt), address(nemo), address(pass), owner, NemoNetworks.local());
+        nemo.setMinter(address(ido));
+        pass.setMinter(address(ido));
         ido.freezeImport();
         ido.openSale();
 
@@ -135,7 +137,7 @@ contract NemoIdoInvariantTest is Test {
     }
 
     function invariant_claimedNotAboveAccrued() public view {
-        assertLe(ido.totalClaimed(), ido.totalAccrued());
+        assertLe(ido.totalClaimed(), ido.totalDirectAccrued());
     }
 
     function invariant_pendingMatchesReserve() public view {
@@ -157,6 +159,6 @@ contract NemoIdoInvariantTest is Test {
         }
         held += nemo.balanceOf(address(ido));
         assertLe(held, nemo.CAP());
-        assertEq(nemo.totalSupply(), nemo.CAP());
+        assertLe(nemo.totalSupply(), nemo.CAP());
     }
 }

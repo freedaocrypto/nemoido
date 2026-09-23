@@ -2,12 +2,16 @@
 /**
  * Export FreeDao nomad users + confirmed IDO volume into import-data.json.
  *
- *   DATABASE_URL=postgres://... node scripts/export-freedao.mjs
- *   node scripts/export-freedao.mjs --in snapshot.json --out import-data.json
+ *   DATABASE_URL=postgres://... node scripts/export-freedao.mjs --network bscMainnet
+ *   node scripts/export-freedao.mjs --in snapshot.json --out import-data.json --network local
+ *
+ * --network local|bscTestnet rewrites wallets to deterministic simulated addresses
+ * and writes an address map. bscMainnet keeps the database wallets.
  */
 import { writeFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { prepareImport } from "./lib/tree.mjs";
+import { remapForNetwork } from "./lib/addresses.mjs";
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -17,6 +21,7 @@ function arg(name, fallback) {
 
 const outPath = resolve(arg("--out", "import-data.json"));
 const inPath = arg("--in", null);
+const network = arg("--network", "bscMainnet");
 
 async function loadFromPostgres() {
   const url = process.env.DATABASE_URL;
@@ -59,16 +64,27 @@ function loadFromFile(path) {
 
 const users = inPath ? loadFromFile(inPath) : await loadFromPostgres();
 const prepared = prepareImport(users);
+const remapped = remapForNetwork(prepared.records, network);
+const mapPath = resolve(arg("--map", `${outPath}.addresses.json`));
 
 const payload = {
   generatedAt: new Date().toISOString(),
   source: inPath ? resolve(inPath) : "DATABASE_URL",
+  network,
   ok: prepared.ok,
   stats: prepared.stats,
   errors: prepared.errors,
   volumeMismatches: prepared.volumeMismatches,
-  records: prepared.records,
+  records: remapped.records,
 };
+
+if (network !== "bscMainnet") {
+  writeFileSync(
+    mapPath,
+    JSON.stringify({ network, generatedAt: payload.generatedAt, map: remapped.map }, null, 2),
+  );
+  console.log(`wrote address map ${mapPath}`);
+}
 
 writeFileSync(outPath, JSON.stringify(payload, null, 2));
 console.log(`wrote ${outPath}`);
