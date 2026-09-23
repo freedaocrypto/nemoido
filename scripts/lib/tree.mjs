@@ -169,6 +169,7 @@ export function prepareImport(users, { maxDepth = 64 } = {}) {
 
   const ordered = topo.map((id) => byId.get(id)).filter(Boolean);
   const records = ordered.map((u) => ({
+    id: u.id,
     wallet: u.wallet,
     inviteCode: u.inviteCode,
     referrer: u.referrerId ? byId.get(u.referrerId)?.wallet ?? null : null,

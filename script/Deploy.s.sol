@@ -2,26 +2,80 @@
 pragma solidity ^0.8.28;
 
 import {Script, console2} from "../lib/forge-std/src/Script.sol";
+import {MockUSDT} from "../src/MockUSDT.sol";
 import {NemoToken} from "../src/NemoToken.sol";
+import {NemoNFT} from "../src/NemoNFT.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
+import {NemoRewards} from "../src/NemoRewards.sol";
+import {NemoNetworks} from "../src/network/NemoNetworks.sol";
 
-/// @notice Mainnet/BSC deploy. Set USDT_ADDRESS and optionally OWNER.
+/// @notice Deploy vault + rewards for local, bscTestnet, or bscMainnet.
+///         Mainnet broadcast requires ALLOW_MAINNET=true. This task does not set that.
 contract Deploy is Script {
-    function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address usdt = vm.envAddress("USDT_ADDRESS");
+    function run() external virtual {
+        _deploy(vm.envOr("NETWORK", string("local")));
+    }
+
+    function _deploy(
+        string memory network
+    ) internal {
+        bytes32 kind = keccak256(bytes(network));
+        bool mainnet = kind == keccak256("bscMainnet");
+        if (mainnet && !vm.envOr("ALLOW_MAINNET", false)) {
+            revert("refusing mainnet broadcast without ALLOW_MAINNET=true");
+        }
+
+        NemoNetworks.Params memory params;
+        if (kind == keccak256("local")) params = NemoNetworks.local();
+        else if (kind == keccak256("bscTestnet")) params = NemoNetworks.bscTestnet();
+        else if (mainnet) params = NemoNetworks.bscMainnet();
+        else revert("NETWORK must be local, bscTestnet, or bscMainnet");
+
+        uint256 pk = vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
         address deployer = vm.addr(pk);
         address owner = vm.envOr("OWNER", deployer);
 
         vm.startBroadcast(pk);
-        NemoToken nemo = new NemoToken(deployer, owner);
-        NemoIdo ido = new NemoIdo(usdt, address(nemo), owner);
-        nemo.transfer(address(ido), nemo.CAP());
+        address usdtAddr = params.usdt;
+        if (usdtAddr == address(0)) {
+            MockUSDT usdt = new MockUSDT();
+            usdtAddr = address(usdt);
+            if (kind == keccak256("local")) {
+                address[4] memory users = [
+                    0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,
+                    0x70997970C51812dc3A010C7d01b50e0d17dc79C8,
+                    0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC,
+                    0x90F79bf6EB2c4f870365E785982E1f101E93b906
+                ];
+                for (uint256 i = 0; i < users.length; i++) {
+                    usdt.mint(users[i], 1_000_000e18);
+                }
+            }
+        }
+
+        NemoToken nemo = new NemoToken(deployer);
+        NemoNFT nft = new NemoNFT(deployer);
+        NemoIdo ido = new NemoIdo(usdtAddr, address(nemo), address(nft), owner, params);
+        nemo.setMinter(address(ido));
+        nft.setMinter(address(ido));
+        address signer = vm.envOr("ADVANCE_SIGNER", deployer);
+        NemoRewards rewards = new NemoRewards(address(ido), owner, signer, params);
+        if (owner == deployer) {
+            ido.setRewards(address(rewards));
+        }
+        if (owner != deployer) {
+            nemo.transferOwnership(owner);
+            nft.transferOwnership(owner);
+        }
         vm.stopBroadcast();
 
-        console2.log("NemoIdo", address(ido));
+        console2.log("network", network);
+        console2.log("USDT", usdtAddr);
         console2.log("NEMOKEY", address(nemo));
-        console2.log("USDT", usdt);
+        console2.log("NemoNFT", address(nft));
+        console2.log("NemoIdo", address(ido));
+        console2.log("NemoRewards", address(rewards));
         console2.log("owner", owner);
+        console2.log("advanceSigner", signer);
     }
 }

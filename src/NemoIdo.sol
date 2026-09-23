@@ -8,87 +8,80 @@ import {ReentrancyGuard} from "../lib/openzeppelin-contracts/contracts/utils/Ree
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import {INemoRewardsView, INemoVaultPay} from "./INemoRewards.sol";
+import {NemoNetworks} from "./network/NemoNetworks.sol";
+import {NemoToken} from "./NemoToken.sol";
+import {NemoNFT} from "./NemoNFT.sol";
+
 /// @title NemoIdo
-/// @notice BSC USDT IDO vault: records contribution / identity, accrues direct + team
-///         differential rewards in USDT, and pays pre-issue nemokey vouchers on contribute.
-///
-/// @dev LOCALDEV BRANCH — DO NOT DEPLOY TO MAINNET.
-///      `weekDuration` is 30 BLOCKS (not 7 days) so forge/Anvil sims can advance
-///      a "week" by mining 30 blocks (one contribute ≈ one block).
-///      MAINNET MUST restore:
-///        - `weekDuration = 7 days`
-///        - `currentWeek()` using `block.timestamp` / `saleOpenedAt`
-///        - remove the `block.chainid == 56` constructor guard
-contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
+/// @notice Vault for invite links, USDT deposits, direct referral, nemokey and NFT.
+///         Multi-level rewards are not computed here. `NemoRewards` authorizes those payouts.
+contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant TIER_COUNT = 3;
+    uint256 public constant REWARD_CAP_BPS = 2500;
     uint256 public constant USDT_UNIT_100 = 100e18;
+    uint256 public constant NFT_UNIT = 500e18;
 
     enum Role {
         None,
         Explorer,
         Ambassador,
-        Partner,
-        CoBuilder
+        Partner
     }
 
     struct Account {
         address referrer;
         bytes32 inviteCode;
         uint256 selfVolume;
-        uint256 teamVolume;
         uint256 directRewards;
-        uint256 teamRewards;
         uint256 claimed;
         bool registered;
     }
 
     IERC20 public immutable usdt;
     IERC20 public immutable nemo;
+    NemoNFT public immutable nft;
+    bool public immutable weekByBlock;
 
     bool public importFrozen;
     bool public saleOpen;
     uint256 public saleOpenedAt;
-    /// @dev LOCALDEV: first `openSale` block. Mainnet week math should ignore this.
     uint256 public saleOpenedBlock;
 
     uint256 public baseTokensPer100 = 10_000e18;
     uint256 public weeklyDecayAbs = 20e18;
-    /// @dev LOCALDEV ONLY: 30 blocks per "week". MAINNET MUST set `7 days`.
-    uint256 public weekDuration = 30;
+    uint256 public weekDuration;
     uint256 public minTokensPer100;
     uint256 public nemoBonusThreshold = 1000e18;
     uint256 public nemoBonusBps = 200;
+    uint256 public tokensPerUsdt;
 
-    uint256 public minIdo = 1e18;
-    uint256 public minReferralAmount = 100e18;
-    uint256 public ambassadorMin = 100e18;
-    uint256 public partnerMin = 1000e18;
-    uint256 public coBuilderTeamMin = 30_000e18;
-    uint256 public directReferralBps = 1000;
-    uint256 public maxReferralDepth = 64;
-
-    uint256[3] public teamTierVolume;
-    uint256[3] public teamTierBps;
+    uint256 public minIdo;
+    uint256 public minReferralAmount;
+    uint256 public ambassadorMin;
+    uint256 public partnerMin;
+    uint256 public directReferralBps;
 
     mapping(address => Account) public accounts;
     mapping(bytes32 => address) public codeToAccount;
+    mapping(address => bool) public hasChildren;
+    mapping(address => uint256) public nftMinted;
 
-    uint256 public totalAccrued;
+    address public rewards;
+
+    uint256 public totalDirectAccrued;
     uint256 public totalClaimed;
     uint256 public totalContributed;
     uint256 public totalNemoAllocated;
 
     event Registered(address indexed account, bytes32 indexed code, address indexed referrer);
     event ReferrerBound(address indexed account, address indexed referrer);
-    event Contributed(
-        address indexed account, uint256 amount, uint256 selfVolume, uint256 teamVolume, uint256 nemoAmount
-    );
+    event Contributed(address indexed account, uint256 amount, uint256 selfVolume, uint256 nemoAmount);
     event NemoAllocated(address indexed account, uint256 nemoAmount);
+    event NftMinted(address indexed account, uint256 count, uint256 totalMinted);
     event DirectRewardAccrued(address indexed referrer, address indexed from, uint256 amount);
-    event TeamRewardAccrued(address indexed beneficiary, address indexed from, uint256 amount, uint256 bps);
     event Claimed(address indexed account, uint256 amount);
     event ImportFrozen();
     event SaleOpened();
@@ -96,17 +89,18 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     event TreasuryWithdrawn(address indexed to, uint256 amount);
     event UserImported(address indexed account, bytes32 indexed code);
     event ReferrerImported(address indexed account, address indexed referrer);
-    event VolumeImported(address indexed account, uint256 selfVolume, uint256 teamVolume);
+    event VolumeImported(address indexed account, uint256 selfVolume);
     event DirectReferralBpsUpdated(uint256 bps);
     event MinReferralAmountUpdated(uint256 amount);
     event MinIdoUpdated(uint256 amount);
-    event IdentityThresholdsUpdated(uint256 ambassadorMin, uint256 partnerMin, uint256 coBuilderTeamMin);
-    event TeamTiersUpdated(uint256[3] volumes, uint256[3] bps);
-    event MaxReferralDepthUpdated(uint256 depth);
+    event IdentityThresholdsUpdated(uint256 ambassadorMin, uint256 partnerMin);
+    event RewardsUpdated(address indexed rewards);
+    event TeamDisbursed(address indexed to, uint256 amount, bool fromOutstanding);
     event NemoScheduleUpdated(
         uint256 baseTokensPer100, uint256 weeklyDecayAbs, uint256 weekDuration, uint256 minTokensPer100
     );
     event NemoBonusUpdated(uint256 threshold, uint256 bps);
+    event TokensPerUsdtUpdated(uint256 rate);
     event UnsoldNemoWithdrawn(address indexed to, uint256 amount);
 
     error NotRegistered();
@@ -119,38 +113,44 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     error AlreadyBound();
     error InvalidReferrer();
     error SelfReferral();
-    error Cycle();
-    error DepthExceeded();
+    error HasChildren();
     error AmountTooSmall();
     error NothingToClaim();
     error InsufficientTreasury();
     error LengthMismatch();
     error ZeroAddress();
-    error InvalidTiers();
     error InvalidThresholds();
     error RewardBpsTooHigh();
-    error ZeroDepth();
     error InsufficientNemo();
     error InvalidSchedule();
-    error LocaldevNotForMainnet();
+    error WrongNetwork();
+    error NotRewards();
 
     constructor(
         address usdt_,
         address nemo_,
-        address initialOwner
+        address nft_,
+        address initialOwner,
+        NemoNetworks.Params memory params
     ) Ownable(initialOwner) {
-        // LOCALDEV: refuse BSC mainnet so this branch cannot be broadcast there.
-        if (block.chainid == 56) revert LocaldevNotForMainnet();
-        if (usdt_ == address(0) || nemo_ == address(0) || initialOwner == address(0)) revert ZeroAddress();
+        if (block.chainid != params.chainId) revert WrongNetwork();
+        if (usdt_ == address(0) || nemo_ == address(0) || nft_ == address(0) || initialOwner == address(0)) {
+            revert ZeroAddress();
+        }
+        if (params.weekDuration == 0 || params.tokensPerUsdt == 0 || params.minIdo == 0) revert InvalidSchedule();
+        if (params.directReferralBps > REWARD_CAP_BPS) revert RewardBpsTooHigh();
         usdt = IERC20(usdt_);
         nemo = IERC20(nemo_);
-        teamTierVolume = [uint256(3000e18), 10_000e18, 30_000e18];
-        teamTierBps = [uint256(300), 600, 900];
+        nft = NemoNFT(nft_);
+        weekByBlock = params.weekByBlock;
+        weekDuration = params.weekDuration;
+        tokensPerUsdt = params.tokensPerUsdt;
+        minIdo = params.minIdo;
+        minReferralAmount = params.minReferralAmount;
+        ambassadorMin = params.ambassadorMin;
+        partnerMin = params.partnerMin;
+        directReferralBps = params.directReferralBps;
     }
-
-    // -------------------------------------------------------------------------
-    // Views
-    // -------------------------------------------------------------------------
 
     function getAccount(
         address account
@@ -162,13 +162,22 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         address account
     ) public view returns (uint256) {
         Account storage a = accounts[account];
-        uint256 accrued = a.directRewards + a.teamRewards;
-        if (accrued <= a.claimed) return 0;
-        return accrued - a.claimed;
+        if (a.directRewards <= a.claimed) return 0;
+        return a.directRewards - a.claimed;
+    }
+
+    function referrerOf(
+        address account
+    ) public view returns (address) {
+        return accounts[account].referrer;
+    }
+
+    function directReserve() public view returns (uint256) {
+        return totalDirectAccrued - totalClaimed;
     }
 
     function reservedRewards() public view returns (uint256) {
-        return totalAccrued - totalClaimed;
+        return directReserve() + _teamOutstanding();
     }
 
     function treasuryWithdrawable() public view returns (uint256) {
@@ -178,44 +187,23 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         return bal - reserved;
     }
 
-    function teamBpsForVolume(
-        uint256 teamVolume_
-    ) public view returns (uint256) {
-        if (teamVolume_ >= teamTierVolume[2]) return teamTierBps[2];
-        if (teamVolume_ >= teamTierVolume[1]) return teamTierBps[1];
-        if (teamVolume_ >= teamTierVolume[0]) return teamTierBps[0];
-        return 0;
-    }
-
-    function teamBpsOf(
-        address account
-    ) public view returns (uint256) {
-        Account storage a = accounts[account];
-        if (!a.registered || a.selfVolume < ambassadorMin) return 0;
-        return teamBpsForVolume(a.teamVolume);
-    }
-
     function roleOf(
         address account
     ) public view returns (Role) {
         Account storage a = accounts[account];
         if (!a.registered || a.selfVolume == 0) return Role.None;
-        if (a.selfVolume >= partnerMin && a.teamVolume >= coBuilderTeamMin) return Role.CoBuilder;
         if (a.selfVolume >= partnerMin) return Role.Partner;
         if (a.selfVolume >= ambassadorMin) return Role.Ambassador;
         return Role.Explorer;
     }
 
-    function getTeamTiers() external view returns (uint256[3] memory volumes, uint256[3] memory bps) {
-        return (teamTierVolume, teamTierBps);
-    }
-
-    /// @dev LOCALDEV: week index from block height. MAINNET MUST use timestamp:
-    ///      `if (saleOpenedAt == 0 || block.timestamp < saleOpenedAt) return 0;`
-    ///      `return (block.timestamp - saleOpenedAt) / weekDuration;`
     function currentWeek() public view returns (uint256) {
-        if (saleOpenedBlock == 0 || block.number < saleOpenedBlock) return 0;
-        return (block.number - saleOpenedBlock) / weekDuration;
+        if (weekByBlock) {
+            if (saleOpenedBlock == 0 || block.number < saleOpenedBlock) return 0;
+            return (block.number - saleOpenedBlock) / weekDuration;
+        }
+        if (saleOpenedAt == 0 || block.timestamp < saleOpenedAt) return 0;
+        return (block.timestamp - saleOpenedAt) / weekDuration;
     }
 
     function tokensPer100(
@@ -228,7 +216,19 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         return per100;
     }
 
-    /// @notice nemokey voucher amount for a USDT contribution at the current week.
+    function tokensFor(
+        uint256 amount
+    ) public view returns (uint256) {
+        return (amount * tokensPerUsdt) / 1e18;
+    }
+
+    function nftRemainder(
+        address account
+    ) public view returns (uint256) {
+        return accounts[account].selfVolume % NFT_UNIT;
+    }
+
+    /// @notice Historical week quote. Deposits mint with `tokensFor`, not this.
     function quote(
         uint256 amount
     ) public view returns (uint256) {
@@ -239,10 +239,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         }
         return nemoAmount;
     }
-
-    // -------------------------------------------------------------------------
-    // User actions
-    // -------------------------------------------------------------------------
 
     function register(
         bytes32 code,
@@ -288,9 +284,20 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         emit Claimed(msg.sender, amount);
     }
 
-    // -------------------------------------------------------------------------
-    // Admin: sale / import lifecycle
-    // -------------------------------------------------------------------------
+    function disburse(
+        address to,
+        uint256 amount,
+        bool fromOutstanding
+    ) external nonReentrant {
+        if (msg.sender != rewards) revert NotRewards();
+        if (to == address(0) || amount == 0) revert ZeroAddress();
+        uint256 bal = usdt.balanceOf(address(this));
+        uint256 locked = directReserve();
+        if (!fromOutstanding) locked += _teamOutstanding();
+        if (bal < locked + amount) revert InsufficientTreasury();
+        usdt.safeTransfer(to, amount);
+        emit TeamDisbursed(to, amount, fromOutstanding);
+    }
 
     function freezeImport() external onlyOwner {
         if (importFrozen) revert ImportFrozenError();
@@ -341,14 +348,10 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         emit UnsoldNemoWithdrawn(to, amount);
     }
 
-    // -------------------------------------------------------------------------
-    // Admin: params
-    // -------------------------------------------------------------------------
-
     function setDirectReferralBps(
         uint256 bps
     ) external onlyOwner {
-        _assertRewardCap(bps, teamTierBps[2]);
+        if (bps > REWARD_CAP_BPS) revert RewardBpsTooHigh();
         directReferralBps = bps;
         emit DirectReferralBpsUpdated(bps);
     }
@@ -370,37 +373,20 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
 
     function setIdentityThresholds(
         uint256 ambassadorMin_,
-        uint256 partnerMin_,
-        uint256 coBuilderTeamMin_
+        uint256 partnerMin_
     ) external onlyOwner {
-        if (ambassadorMin_ == 0 || ambassadorMin_ > partnerMin_ || coBuilderTeamMin_ == 0) {
-            revert InvalidThresholds();
-        }
+        if (ambassadorMin_ == 0 || ambassadorMin_ > partnerMin_) revert InvalidThresholds();
         ambassadorMin = ambassadorMin_;
         partnerMin = partnerMin_;
-        coBuilderTeamMin = coBuilderTeamMin_;
-        emit IdentityThresholdsUpdated(ambassadorMin_, partnerMin_, coBuilderTeamMin_);
+        emit IdentityThresholdsUpdated(ambassadorMin_, partnerMin_);
     }
 
-    function setTeamTiers(
-        uint256[3] calldata volumes,
-        uint256[3] calldata bps
+    function setRewards(
+        address rewards_
     ) external onlyOwner {
-        if (volumes[0] == 0 || volumes[0] >= volumes[1] || volumes[1] >= volumes[2]) revert InvalidTiers();
-        if (bps[0] == 0 || bps[0] >= bps[1] || bps[1] >= bps[2]) revert InvalidTiers();
-        _assertRewardCap(directReferralBps, bps[2]);
-        teamTierVolume = volumes;
-        teamTierBps = bps;
-        emit TeamTiersUpdated(volumes, bps);
-    }
-
-    function setMaxReferralDepth(
-        uint256 depth
-    ) external onlyOwner {
-        if (depth == 0) revert ZeroDepth();
-        if (depth > 128) revert DepthExceeded();
-        maxReferralDepth = depth;
-        emit MaxReferralDepthUpdated(depth);
+        if (rewards_ == address(0)) revert ZeroAddress();
+        rewards = rewards_;
+        emit RewardsUpdated(rewards_);
     }
 
     function setNemoSchedule(
@@ -409,7 +395,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 weekDuration_,
         uint256 minTokensPer100_
     ) external onlyOwner {
-        // LOCALDEV: `weekDuration_` is in blocks. MAINNET MUST pass seconds (`7 days`).
         if (baseTokensPer100_ == 0 || weekDuration_ == 0) revert InvalidSchedule();
         if (minTokensPer100_ > baseTokensPer100_) revert InvalidSchedule();
         baseTokensPer100 = baseTokensPer100_;
@@ -429,9 +414,13 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         emit NemoBonusUpdated(threshold, bps);
     }
 
-    // -------------------------------------------------------------------------
-    // Admin: historical import (no rewards)
-    // -------------------------------------------------------------------------
+    function setTokensPerUsdt(
+        uint256 rate
+    ) external onlyOwner {
+        if (rate == 0) revert InvalidSchedule();
+        tokensPerUsdt = rate;
+        emit TokensPerUsdtUpdated(rate);
+    }
 
     function importUsers(
         address[] calldata wallets,
@@ -464,30 +453,23 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
 
     function importVolumes(
         address[] calldata wallets,
-        uint256[] calldata selfVolumes,
-        uint256[] calldata teamVolumes
+        uint256[] calldata selfVolumes
     ) external onlyOwner {
         if (importFrozen) revert ImportFrozenError();
         uint256 n = wallets.length;
-        if (n != selfVolumes.length || n != teamVolumes.length) revert LengthMismatch();
+        if (n != selfVolumes.length) revert LengthMismatch();
         for (uint256 i = 0; i < n; i++) {
             address account = wallets[i];
             if (!accounts[account].registered) revert NotRegistered();
             accounts[account].selfVolume = selfVolumes[i];
-            accounts[account].teamVolume = teamVolumes[i];
-            emit VolumeImported(account, selfVolumes[i], teamVolumes[i]);
+            nftMinted[account] = selfVolumes[i] / NFT_UNIT;
+            emit VolumeImported(account, selfVolumes[i]);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Internals
-    // -------------------------------------------------------------------------
-
-    function _assertRewardCap(
-        uint256 directBps,
-        uint256 maxTeamBps
-    ) internal pure {
-        if (directBps + maxTeamBps > BPS_DENOMINATOR) revert RewardBpsTooHigh();
+    function _teamOutstanding() internal view returns (uint256) {
+        if (rewards == address(0)) return 0;
+        return INemoRewardsView(rewards).outstanding();
     }
 
     function _register(
@@ -544,24 +526,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     ) internal {
         if (referrer == address(0) || !accounts[referrer].registered) revert InvalidReferrer();
         if (referrer == account) revert SelfReferral();
-        _assertNoCycle(account, referrer);
+        if (hasChildren[account]) revert HasChildren();
         accounts[account].referrer = referrer;
-    }
-
-    function _assertNoCycle(
-        address account,
-        address referrer
-    ) internal view {
-        address cursor = referrer;
-        uint256 depth = 1;
-        while (cursor != address(0)) {
-            if (cursor == account) revert Cycle();
-            if (depth > maxReferralDepth) revert DepthExceeded();
-            cursor = accounts[cursor].referrer;
-            unchecked {
-                depth++;
-            }
-        }
+        hasChildren[referrer] = true;
     }
 
     function _contribute(
@@ -573,41 +540,33 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
         if (amount < minIdo) revert AmountTooSmall();
 
         usdt.safeTransferFrom(account, address(this), amount);
-
         accounts[account].selfVolume += amount;
         totalContributed += amount;
-        _bumpAncestorTeam(account, amount);
 
         if (amount >= minReferralAmount) {
             _settleDirect(account, amount);
-            _settleTeam(account, amount);
         }
 
-        uint256 nemoAmount = quote(amount);
-        if (nemoAmount > nemo.balanceOf(address(this))) revert InsufficientNemo();
+        uint256 nemoAmount = tokensFor(amount);
         if (nemoAmount > 0) {
-            nemo.safeTransfer(account, nemoAmount);
+            NemoToken(address(nemo)).mint(account, nemoAmount);
             totalNemoAllocated += nemoAmount;
             emit NemoAllocated(account, nemoAmount);
         }
-
-        emit Contributed(account, amount, accounts[account].selfVolume, accounts[account].teamVolume, nemoAmount);
+        _syncNfts(account);
+        emit Contributed(account, amount, accounts[account].selfVolume, nemoAmount);
     }
 
-    function _bumpAncestorTeam(
-        address account,
-        uint256 amount
+    function _syncNfts(
+        address account
     ) internal {
-        address cursor = accounts[account].referrer;
-        uint256 depth = 0;
-        while (cursor != address(0)) {
-            if (depth >= maxReferralDepth) revert DepthExceeded();
-            accounts[cursor].teamVolume += amount;
-            cursor = accounts[cursor].referrer;
-            unchecked {
-                depth++;
-            }
-        }
+        uint256 owed = accounts[account].selfVolume / NFT_UNIT;
+        uint256 minted = nftMinted[account];
+        if (owed <= minted) return;
+        uint256 count = owed - minted;
+        nftMinted[account] = owed;
+        nft.mint(account, count);
+        emit NftMinted(account, count, owed);
     }
 
     function _settleDirect(
@@ -616,39 +575,11 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard {
     ) internal {
         address referrer = accounts[from].referrer;
         if (referrer == address(0)) return;
-        if (accounts[referrer].selfVolume < ambassadorMin) return;
         uint256 reward = (amount * directReferralBps) / BPS_DENOMINATOR;
         if (reward == 0) return;
         accounts[referrer].directRewards += reward;
-        totalAccrued += reward;
+        totalDirectAccrued += reward;
         emit DirectRewardAccrued(referrer, from, reward);
-    }
-
-    function _settleTeam(
-        address from,
-        uint256 amount
-    ) internal {
-        uint256 prevBps = 0;
-        address cursor = accounts[from].referrer;
-        uint256 depth = 0;
-        while (cursor != address(0)) {
-            if (depth >= maxReferralDepth) revert DepthExceeded();
-            uint256 rate = teamBpsOf(cursor);
-            if (rate > prevBps) {
-                uint256 diff = rate - prevBps;
-                uint256 reward = (amount * diff) / BPS_DENOMINATOR;
-                if (reward > 0) {
-                    accounts[cursor].teamRewards += reward;
-                    totalAccrued += reward;
-                    emit TeamRewardAccrued(cursor, from, reward, diff);
-                }
-                prevBps = rate;
-            }
-            cursor = accounts[cursor].referrer;
-            unchecked {
-                depth++;
-            }
-        }
     }
 
     function _isValidInviteCode(

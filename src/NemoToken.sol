@@ -10,22 +10,58 @@ import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/uti
 
 /// @title NemoToken
 /// @notice Pre-issue IDO voucher (name/symbol: nemokey / NEMOKEY).
-///         Fixed 500m supply minted once to the IDO vault.
-///         Official listing will map by holder proportion; this contract does not swap.
+///         On-demand mint up to CAP. Default transfers are locked; Owner may
+///         allowlist campaign wallets so they can send points to users.
+///         Recipients who are not allowlisted cannot transfer onward.
 contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
 
-    uint256 public constant CAP = 500_000_000e18;
+    uint256 public constant CAP = 1_000_000_000e18;
+
+    address public minter;
+    mapping(address => bool) public transferAllowlist;
+
+    event MinterUpdated(address indexed minter);
+    event TransferAllowlistUpdated(address indexed account, bool allowed);
 
     error ZeroAddress();
     error RescueSelf();
+    error NotAuthorized();
+    error CapExceeded();
+    error TransfersLocked();
 
     constructor(
-        address distribution,
         address initialOwner
     ) ERC20("nemokey", "NEMOKEY") Ownable(initialOwner) {
-        if (distribution == address(0) || initialOwner == address(0)) revert ZeroAddress();
-        _mint(distribution, CAP);
+        if (initialOwner == address(0)) revert ZeroAddress();
+    }
+
+    function setMinter(
+        address minter_
+    ) external onlyOwner {
+        if (minter_ == address(0)) revert ZeroAddress();
+        minter = minter_;
+        emit MinterUpdated(minter_);
+    }
+
+    function setTransferAllowlist(
+        address account,
+        bool allowed
+    ) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        transferAllowlist[account] = allowed;
+        emit TransferAllowlistUpdated(account, allowed);
+    }
+
+    /// @notice Vault minter (contribute path) or Owner (campaign inventory) may mint.
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
+        if (msg.sender != minter && msg.sender != owner()) revert NotAuthorized();
+        if (to == address(0)) revert ZeroAddress();
+        if (totalSupply() + amount > CAP) revert CapExceeded();
+        _mint(to, amount);
     }
 
     function pause() external onlyOwner {
@@ -52,6 +88,9 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         address to,
         uint256 value
     ) internal override(ERC20, ERC20Pausable) {
+        if (from != address(0) && to != address(0)) {
+            if (!transferAllowlist[from] && !transferAllowlist[to]) revert TransfersLocked();
+        }
         super._update(from, to, value);
     }
 }

@@ -173,16 +173,14 @@ contract NemoIdoSecurityTest is NemoIdoBase {
         vault.contribute(100 * UNIT);
     }
 
-    function test_depthExceededOnBind() public {
-        vm.prank(owner);
-        ido.setMaxReferralDepth(2);
+    function test_deepReferralStillBinds() public {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
         _register(carol, "CAROL001", "BOB00001");
         vm.prank(dave);
-        vm.expectRevert(NemoIdo.DepthExceeded.selector);
         ido.register(_code("DAVE0001"), _code("CAROL001"));
+        assertEq(ido.referrerOf(dave), carol);
     }
 
     function test_ownable2Step() public {
