@@ -108,3 +108,19 @@ IDO 页面上的「尚未开售 / pendingOf 返回 0x」是同一类问题：登
 
 17. 前端发合约写交易统一走注入钱包的 `eth_sendTransaction` + 手动 calldata，不要用 viem `writeContract` 依赖注入钱包预估 gas。上主网前用币安钱包实测一次入金，确认交易真的进入区块（有 tx hash 且 `selfVolume` 增加）。
 18. 授权与入金分两步时，第二步成功的判据是链上出现 Contributed 事件或 `selfVolume` 增加，不能只看前端跳转。
+
+## 2026-09-27（二）：确认入金交易 out-of-gas 回滚
+
+现象：币安钱包里出现一条失败交易（`0x05aa73b1…`，status 0x0）。前端没有报错。
+
+链上核对：`gasUsed=714662`，而 gas limit 只有 `720000`——几乎烧光全部 gas，是 out-of-gas，不是 require 回滚（require 会退还剩余 gas）。用 `eth_estimateGas` 实测 `registerAndContribute` 真实需要约 `921451` gas。币安钱包自估的 gas 严重偏低（很可能是授权还没确认时 estimateGas 失败、回退到默认 720000），首次注册+入金+铸 NEMO 这类重调用就 OOG 了。
+
+改法（`components/site/NemoChainPanel.tsx` 的 `sendTx`）：
+- 发交易前用 HTTP RPC `estimateGas` 自己估算，乘 1.5 作为 gas limit 显式带入 `eth_sendTransaction`，不依赖钱包自估。
+- `estimateGas` 若失败（说明必然回滚）直接抛出原因、不把注定失败的交易发给钱包。
+- 回执 `status === 'reverted'` 时抛出带交易哈希的错误，前端 catch 后在 UI 显示。
+
+主网核对：
+
+19. 所有链上写交易发送前必须显式设置 gas limit（自估 × 1.5 或更高），不能依赖注入钱包自估，`registerAndContribute` 首次调用真实用量约 90 万 gas。
+20. 前端发交易后必须校验回执 `status`，回滚要向用户显示明确错误（含交易哈希），不能静默跳转。
