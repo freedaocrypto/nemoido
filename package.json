@@ -15,7 +15,9 @@
     "verify:root": "node scripts/verify-root.mjs",
     "interest:boundary": "node scripts/lock-interest-boundary.mjs",
     "mint:test-usdt": "node scripts/mint-test-usdt.mjs",
-    "import:testnet": "node scripts/import-prod-to-testnet.mjs"
+    "import:testnet": "node scripts/import-prod-to-testnet.mjs",
+    "reset:testnet-db": "node scripts/reset-testnet-db.mjs",
+    "vercel:testnet-preview": "node scripts/upload-testnet-vercel-preview.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",
