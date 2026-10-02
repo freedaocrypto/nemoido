@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assertSafeReset, previewEnvUpdates } from "./testnet-ops.mjs";
+import { assertSafeReset, previewEnvUpdates, usdtMintTargets } from "./testnet-ops.mjs";
 
 const env = {
   BSC_TESTNET_USDT: "0x328DF52234Bd5EF600dBD8b3F2B1d2ea0b370B49",
@@ -48,4 +48,19 @@ test("preview upload list contains only the new public testnet settings", () => 
   assert.equal(blob.includes("TEST_PRIVATE_KEY"), false);
   assert.equal(blob.includes("secret"), false);
   assert.equal(blob.includes("DATABASE_URL"), false);
+});
+
+test("mint targets keep addresses and drop private keys", () => {
+  const targets = usdtMintTargets({
+    wallets: [
+      { index: 1, address: "0xc297969E261Cd146F555eBc32255EB8371Ba7FCC", privateKey: "0xabc" },
+      { index: 2, address: "0x84e8997f301FB0192df6D381eC5b176b84619905", privateKey: "0xdef" },
+    ],
+  });
+  assert.deepEqual(targets, [
+    { index: 1, address: "0xc297969E261Cd146F555eBc32255EB8371Ba7FCC" },
+    { index: 2, address: "0x84e8997f301FB0192df6D381eC5b176b84619905" },
+  ]);
+  assert.equal(JSON.stringify(targets).includes("privateKey"), false);
+  assert.throws(() => usdtMintTargets({ wallets: [] }), /没有地址/);
 });
