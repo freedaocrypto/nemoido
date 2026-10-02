@@ -7,7 +7,7 @@ interface INemoVaultPay {
     function usdt() external view returns (IERC20);
     function totalContributed() external view returns (uint256);
     function totalDirectAccrued() external view returns (uint256);
-    function disburse(address to, uint256 amount, bool fromOutstanding) external;
+    function disburse(address to, uint256 amount) external;
 }
 
 interface INemoRewardsView {

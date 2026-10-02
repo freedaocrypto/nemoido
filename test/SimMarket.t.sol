@@ -96,7 +96,7 @@ contract SimMarket is Test {
         vm.skip(true, "phase 1: team-reward market sim deferred to phase 4");
         usdt = new MockUSDT();
         nemo = new NemoToken(address(this));
-        NemoNFT pass = new NemoNFT(address(this));
+        NemoNFT pass = new NemoNFT(address(this), "NemoNFT", "NEMONFT");
         ido = new NemoIdo(address(usdt), address(nemo), address(pass), address(this), NemoNetworks.local());
         nemo.setMinter(address(ido));
         pass.setMinter(address(ido));

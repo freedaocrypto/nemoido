@@ -6,7 +6,7 @@
  *   node scripts/scale-anvil.mjs
  *
  * BSC testnet, after a funded deploy (this file does not invent a broadcast):
- *   RPC_URL=$BSC_TESTNET_RPC PRIVATE_KEY=0x... CHAIN_ID=97 \
+ *   RPC_URL=$BSC_TESTNET_RPC TEST_PRIVATE_KEY=0x... CHAIN_ID=97 \
  *     IDO_ADDRESS=0x... USDT_ADDRESS=0x... REWARDS_ADDRESS=0x... \
  *     node scripts/scale-anvil.mjs
  */
@@ -45,13 +45,9 @@ const usdtAbi = parseAbi([
   "function balanceOf(address) view returns (uint256)",
 ]);
 const rewardsAbi = parseAbi([
-  "function submitRoot(bytes32 root, bytes32 contentHash, uint256 cumulative)",
-  "function activateRoot()",
+  "function publishRoot(bytes32 root, bytes32 contentHash, uint256 cumulative, string uri)",
   "function claim(uint256 cumulative, bytes32[] proof)",
-  "function claimAdvance(uint256 cumulative, uint256 deadline, bytes signature)",
   "function claimed(address) view returns (uint256)",
-  "function advancePerAccountCap() view returns (uint256)",
-  "function rootTimelock() view returns (uint256)",
   "function outstanding() view returns (uint256)",
 ]);
 
@@ -114,7 +110,8 @@ function pickAddress(envName, fallback) {
 const ido = pickAddress("IDO_ADDRESS", broadcast.NemoIdo);
 const usdt = pickAddress("USDT_ADDRESS", broadcast.MockUSDT);
 const rewardsAddr = pickAddress("REWARDS_ADDRESS", broadcast.NemoRewards);
-const ownerPk = process.env.PRIVATE_KEY || ANVIL_KEY;
+const ownerPk = process.env.CHAIN_ID === "97" ? process.env.TEST_PRIVATE_KEY : process.env.LOCAL_PRIVATE_KEY || ANVIL_KEY;
+if (!ownerPk) throw new Error("缺少签名私钥：本地用 LOCAL_PRIVATE_KEY，测试网用 TEST_PRIVATE_KEY。");
 const owner = privateKeyToAccount(ownerPk.startsWith("0x") ? ownerPk : `0x${ownerPk}`);
 const ownerWallet = clientFor(owner, chain, transport);
 
@@ -276,16 +273,7 @@ if (direct + teamSum > cap) {
 }
 
 const contentHash = keccak256(toBytes(JSON.stringify(entries.map((e) => [e.account, e.cumulative.toString()]))));
-
-const capPer = await publicClient.readContract({
-  address: rewardsAddr,
-  abi: rewardsAbi,
-  functionName: "advancePerAccountCap",
-});
-const advanceEntry = entries.find(
-  (e) => e.cumulative <= capPer && e.account.toLowerCase() !== owner.address.toLowerCase(),
-);
-const claimEntry = entries.find((e) => e !== advanceEntry);
+const claimEntry = entries.find((e) => e.account.toLowerCase() !== owner.address.toLowerCase()) || entries[0];
 
 async function proofFor(entry) {
   const leaf = leafHash(entry.account, entry.cumulative);
@@ -294,81 +282,10 @@ async function proofFor(entry) {
   return proof;
 }
 
-if (advanceEntry) {
-  const user = actors.find((a) => a.account.address.toLowerCase() === advanceEntry.account.toLowerCase());
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-  const signature = await owner.signTypedData({
-    domain: { name: "NemoRewards", version: "1", chainId, verifyingContract: rewardsAddr },
-    types: {
-      Advance: [
-        { name: "account", type: "address" },
-        { name: "cumulative", type: "uint256" },
-        { name: "nonce", type: "uint256" },
-        { name: "deadline", type: "uint256" },
-      ],
-    },
-    primaryType: "Advance",
-    message: { account: advanceEntry.account, cumulative: advanceEntry.cumulative, nonce: 0n, deadline },
-  });
-  const before = await publicClient.readContract({
-    address: usdt,
-    abi: usdtAbi,
-    functionName: "balanceOf",
-    args: [advanceEntry.account],
-  });
-  await send(user.wallet, publicClient, rewardsAbi, rewardsAddr, "claimAdvance", [
-    advanceEntry.cumulative,
-    deadline,
-    signature,
-  ]);
-  const mid = await publicClient.readContract({
-    address: usdt,
-    abi: usdtAbi,
-    functionName: "balanceOf",
-    args: [advanceEntry.account],
-  });
-  if (mid - before !== advanceEntry.cumulative) {
-    throw new Error(`advance paid ${mid - before}, expected ${advanceEntry.cumulative}`);
-  }
-  console.log(`advance paid ${advanceEntry.cumulative} to ${advanceEntry.account}`);
-}
-
-await send(ownerWallet, publicClient, rewardsAbi, rewardsAddr, "submitRoot", [tree.root, contentHash, teamSum]);
-
-const timelock = await publicClient.readContract({
-  address: rewardsAddr,
-  abi: rewardsAbi,
-  functionName: "rootTimelock",
-});
+await send(ownerWallet, publicClient, rewardsAbi, rewardsAddr, "publishRoot", [tree.root, contentHash, teamSum, ""]);
 if (chainId !== 31337) {
-  console.log(`root submitted. timelock is ${timelock}s; not waiting on a public network.`);
-  console.log("deposits ok; activateRoot + merkle claim were not sent.");
+  console.log("root published and active. merkle claim was not sent on a public network.");
   process.exit(0);
-}
-await publicClient.request({ method: "evm_increaseTime", params: [Number(timelock)] });
-await publicClient.request({ method: "evm_mine", params: [] });
-await send(ownerWallet, publicClient, rewardsAbi, rewardsAddr, "activateRoot", []);
-
-if (advanceEntry) {
-  const user = actors.find((a) => a.account.address.toLowerCase() === advanceEntry.account.toLowerCase());
-  const beforeClaim = await publicClient.readContract({
-    address: usdt,
-    abi: usdtAbi,
-    functionName: "balanceOf",
-    args: [advanceEntry.account],
-  });
-  await send(user.wallet, publicClient, rewardsAbi, rewardsAddr, "claim", [
-    advanceEntry.cumulative,
-    await proofFor(advanceEntry),
-  ]);
-  const after = await publicClient.readContract({
-    address: usdt,
-    abi: usdtAbi,
-    functionName: "balanceOf",
-    args: [advanceEntry.account],
-  });
-  if (after !== beforeClaim) throw new Error("merkle claim double-paid an advance");
-  console.log(`claim after advance paid 0 more for ${advanceEntry.account}`);
 }
 
 if (claimEntry) {

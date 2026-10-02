@@ -1,6 +1,8 @@
 # nemoido 安全审计报告（链下网体结算版）
 
-日期：2026-09-23  
+日期：2026-09-23
+
+> **第一版，已被 [SECURITY-AUDIT-2026-09-23-R2.md](SECURITY-AUDIT-2026-09-23-R2.md) 取代。** 实时垫付（`claimAdvance` / EIP-712）已从合约删除，下文 M-3、L-1 描述的是删除前的垫付路径。其余发现的当前状态和新编号见第二版第 7 节；本文复现测试的函数名也已按第二版改名。  
 版本：`localdev` 工作区，未提交  
 类型：**内部代码审查**，不是付费第三方审计。主网上线前仍需外部审计。  
 范围：`NemoIdo`、`NemoRewards`、`INemoRewards`、`NemoToken`、`NemoNFT`、`NemoNetworks`、`MockUSDT`，部署脚本，链下计算、Merkle、地址映射、导出和导入脚本。  

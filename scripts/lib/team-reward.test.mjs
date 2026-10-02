@@ -29,6 +29,22 @@ test("bps boundaries", () => {
   assert.equal(bpsForQual(u(60000)), 1000n);
 });
 
+test("self 10k then direct 1000 pays 10 percent direct and 7 percent team", () => {
+  const s = createState();
+  bind(s, "bob", null);
+  bind(s, "carol", "bob");
+  contribute(s, "bob", u(10_000));
+  assert.equal(directOf(s, "bob"), 0n);
+  assert.equal(teamOf(s, "bob"), 0n);
+  assert.equal(bpsForQual(s.self.get("bob") + (s.team.get("bob") ?? 0n)), 700n);
+
+  const tx = contribute(s, "carol", u(1000));
+  assert.equal(tx.directTo, "bob");
+  assert.equal(tx.directPaid, u(100));
+  assert.equal(directOf(s, "bob"), u(100));
+  assert.equal(teamOf(s, "bob"), u(70));
+});
+
 test("golden self500 then recruit 1000", () => {
   const s = createState();
   bind(s, "alice", null);

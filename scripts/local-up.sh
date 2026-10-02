@@ -5,7 +5,7 @@ cd "$ROOT"
 export PATH="$HOME/.foundry/bin:$PATH"
 
 RPC="${RPC_URL:-http://127.0.0.1:8545}"
-PK="${PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+PK="${LOCAL_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 
 if ! curl -s -X POST -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
@@ -58,7 +58,7 @@ if [ -z "$IDO_ADDRESS" ]; then
 fi
 
 echo "==> Seed ROOTANVL"
-IDO_ADDRESS="$IDO_ADDRESS" PRIVATE_KEY="$PK" forge script script/SeedLocal.s.sol:SeedLocal \
+IDO_ADDRESS="$IDO_ADDRESS" LOCAL_PRIVATE_KEY="$PK" forge script script/SeedLocal.s.sol:SeedLocal \
   --rpc-url "$RPC" --private-key "$PK" --broadcast -vv
 
 echo

@@ -7,6 +7,7 @@ import {NemoToken} from "../src/NemoToken.sol";
 import {NemoNFT} from "../src/NemoNFT.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
 import {NemoRewards} from "../src/NemoRewards.sol";
+import {NemoNftInterest} from "../src/NemoNftInterest.sol";
 import {NemoNetworks} from "../src/network/NemoNetworks.sol";
 
 /// @notice Deploy vault + rewards for local, bscTestnet, or bscMainnet.
@@ -31,7 +32,14 @@ contract Deploy is Script {
         else if (mainnet) params = NemoNetworks.bscMainnet();
         else revert("NETWORK must be local, bscTestnet, or bscMainnet");
 
-        uint256 pk = vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+        uint256 pk;
+        if (kind == keccak256("local")) {
+            pk = vm.envOr("LOCAL_PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+        } else if (kind == keccak256("bscTestnet")) {
+            pk = vm.envUint("TEST_PRIVATE_KEY");
+        } else {
+            pk = vm.envUint("MAINNET_PRIVATE_KEY");
+        }
         address deployer = vm.addr(pk);
         address owner = vm.envOr("OWNER", deployer);
 
@@ -54,14 +62,16 @@ contract Deploy is Script {
         }
 
         NemoToken nemo = new NemoToken(deployer);
-        NemoNFT nft = new NemoNFT(deployer);
+        NemoNFT nft = new NemoNFT(deployer, "NemoNFT", "NEMONFT");
         NemoIdo ido = new NemoIdo(usdtAddr, address(nemo), address(nft), owner, params);
         nemo.setMinter(address(ido));
         nft.setMinter(address(ido));
-        address signer = vm.envOr("ADVANCE_SIGNER", deployer);
-        NemoRewards rewards = new NemoRewards(address(ido), owner, signer, params);
+        NemoRewards rewards = new NemoRewards(address(ido), owner, params);
+        NemoNftInterest interest = new NemoNftInterest(address(ido), owner);
+        nemo.setInterestMinter(address(interest));
         if (owner == deployer) {
             ido.setRewards(address(rewards));
+            ido.setNftInterest(address(interest));
         }
         if (owner != deployer) {
             nemo.transferOwnership(owner);
@@ -75,7 +85,7 @@ contract Deploy is Script {
         console2.log("NemoNFT", address(nft));
         console2.log("NemoIdo", address(ido));
         console2.log("NemoRewards", address(rewards));
+        console2.log("NemoNftInterest", address(interest));
         console2.log("owner", owner);
-        console2.log("advanceSigner", signer);
     }
 }

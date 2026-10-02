@@ -1,6 +1,6 @@
 # nemoido 合约安全审计报告
 
-> **历史版本。** 本文审查的是已删除的链上遍历团队模块（`NemoTeamReward`）。当前链下结算版本的审计见 [SECURITY-AUDIT-2026-09-23.md](SECURITY-AUDIT-2026-09-23.md)，功能说明见 [FUNCTIONAL-REPORT.md](FUNCTIONAL-REPORT.md)。
+> **历史版本。** 本文审查的是已删除的链上遍历团队模块（`NemoTeamReward`）。当前版本的审计见 [SECURITY-AUDIT-2026-09-24-R6.md](SECURITY-AUDIT-2026-09-24-R6.md)，功能说明见 [FUNCTIONAL-REPORT.md](FUNCTIONAL-REPORT.md)。
 
 日期：2026-09-18  
 分支：`localdev`（阶段 1–5 完成后）  

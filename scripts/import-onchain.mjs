@@ -2,7 +2,7 @@
 /**
  * Batch-import records from import-data.json into a deployed NemoIdo.
  *
- *   IDO_ADDRESS=0x... RPC_URL=http://127.0.0.1:8545 PRIVATE_KEY=0x... \
+ *   IDO_ADDRESS=0x... RPC_URL=http://127.0.0.1:8545 LOCAL_PRIVATE_KEY=0x... \
  *     node scripts/import-onchain.mjs --in import-data.json
  *   ... node scripts/import-onchain.mjs --apply
  */
@@ -41,9 +41,13 @@ const { privateKeyToAccount } = await import("viem/accounts");
 
 const rpc = process.env.RPC_URL || "http://127.0.0.1:8545";
 const ido = process.env.IDO_ADDRESS;
-const pk = process.env.PRIVATE_KEY;
+const pk = process.env.CHAIN_ID === "97" ? process.env.TEST_PRIVATE_KEY : process.env.LOCAL_PRIVATE_KEY;
+if (process.env.PRIVATE_KEY && !pk) {
+  console.error("不要使用 PRIVATE_KEY。本地用 LOCAL_PRIVATE_KEY，测试网用 TEST_PRIVATE_KEY。");
+  process.exit(1);
+}
 if (!ido || !pk) {
-  console.error("Need IDO_ADDRESS and PRIVATE_KEY");
+  console.error("Need IDO_ADDRESS and LOCAL_PRIVATE_KEY（测试网则是 TEST_PRIVATE_KEY）");
   process.exit(1);
 }
 
