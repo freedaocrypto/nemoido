@@ -112,7 +112,7 @@ contract NemoIdoInvariantTest is Test {
     function setUp() public {
         usdt = new MockUSDT();
         nemo = new NemoToken(owner);
-        NemoNFT pass = new NemoNFT(owner);
+        NemoNFT pass = new NemoNFT(owner, "NemoNFT", "NEMONFT");
         ido = new NemoIdo(address(usdt), address(nemo), address(pass), owner, NemoNetworks.local());
         nemo.setMinter(address(ido));
         pass.setMinter(address(ido));

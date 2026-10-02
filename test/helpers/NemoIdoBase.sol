@@ -37,7 +37,7 @@ contract NemoIdoBase is Test {
         address usdtToken
     ) internal returns (NemoIdo vault, NemoToken token) {
         token = new NemoToken(owner);
-        nft = new NemoNFT(owner);
+        nft = new NemoNFT(owner, "NemoNFT", "NEMONFT");
         vault = new NemoIdo(usdtToken, address(token), address(nft), owner, NemoNetworks.local());
         vm.startPrank(owner);
         token.setMinter(address(vault));

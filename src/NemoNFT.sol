@@ -7,7 +7,7 @@ import {ERC721} from "../lib/openzeppelin-contracts/contracts/token/ERC721/ERC72
 
 /// @title NemoNFT
 /// @notice Soulbound pass: one token per 500 USDT of self volume, minted by the vault.
-///         Transfers are permanently disabled. No yield in this phase.
+///         Transfers are permanently disabled. Weekly yield is paid by NemoNftInterest.
 contract NemoNFT is ERC721, Ownable2Step {
     address public minter;
     uint256 public nextId;
@@ -18,16 +18,21 @@ contract NemoNFT is ERC721, Ownable2Step {
     error NotAuthorized();
     error TransfersLocked();
     error ZeroCount();
+    error MinterAlreadySet();
 
     constructor(
-        address initialOwner
-    ) ERC721("NemoNFT", "NEMONFT") Ownable(initialOwner) {
+        address initialOwner,
+        string memory name_,
+        string memory symbol_
+    ) ERC721(name_, symbol_) Ownable(initialOwner) {
         if (initialOwner == address(0)) revert ZeroAddress();
     }
 
+    /// @notice The vault is the only minter, and the address can be set only once.
     function setMinter(
         address minter_
     ) external onlyOwner {
+        if (minter != address(0)) revert MinterAlreadySet();
         if (minter_ == address(0)) revert ZeroAddress();
         minter = minter_;
         emit MinterUpdated(minter_);

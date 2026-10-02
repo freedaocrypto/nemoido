@@ -9,6 +9,7 @@ states/
 cache/
 out/
 broadcast/
+roots/
 
 # Foundry deps cloned by scripts/install-deps.sh
 /lib/

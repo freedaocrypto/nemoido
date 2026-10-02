@@ -9,6 +9,7 @@ import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20
 import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {INemoRewardsView, INemoVaultPay} from "./INemoRewards.sol";
+import {INemoNftInterest} from "./INemoNftInterest.sol";
 import {NemoNetworks} from "./network/NemoNetworks.sol";
 import {NemoToken} from "./NemoToken.sol";
 import {NemoNFT} from "./NemoNFT.sol";
@@ -70,6 +71,16 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     mapping(address => uint256) public nftMinted;
 
     address public rewards;
+    address public proposedRewards;
+    uint256 public proposedRewardsEta;
+    uint256 public immutable rewardsDelay;
+    address public nftInterest;
+    bool public idoEnded;
+    uint256 public idoEndedWeek;
+    uint256 public immutable nftCap;
+    uint256 public nftsAllocated;
+    mapping(address => uint256) public importedNfts;
+    mapping(address => uint256) public grantedNfts;
 
     uint256 public totalDirectAccrued;
     uint256 public totalClaimed;
@@ -81,6 +92,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     event Contributed(address indexed account, uint256 amount, uint256 selfVolume, uint256 nemoAmount);
     event NemoAllocated(address indexed account, uint256 nemoAmount);
     event NftMinted(address indexed account, uint256 count, uint256 totalMinted);
+    event NftDeferred(address indexed account, uint256 totalDeferred);
     event DirectRewardAccrued(address indexed referrer, address indexed from, uint256 amount);
     event Claimed(address indexed account, uint256 amount);
     event ImportFrozen();
@@ -95,7 +107,12 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     event MinIdoUpdated(uint256 amount);
     event IdentityThresholdsUpdated(uint256 ambassadorMin, uint256 partnerMin);
     event RewardsUpdated(address indexed rewards);
-    event TeamDisbursed(address indexed to, uint256 amount, bool fromOutstanding);
+    event RewardsProposed(address indexed next, uint256 eta);
+    event RewardsProposalCancelled(address indexed next);
+    event IdoEnded(uint256 endedWeek);
+    event NftInterestUpdated(address indexed interest);
+    event NftGranted(address indexed account, uint256 count);
+    event TeamDisbursed(address indexed to, uint256 amount);
     event NemoScheduleUpdated(
         uint256 baseTokensPer100, uint256 weeklyDecayAbs, uint256 weekDuration, uint256 minTokensPer100
     );
@@ -125,6 +142,13 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     error InvalidSchedule();
     error WrongNetwork();
     error NotRewards();
+    error InterestAlreadySet();
+    error RewardsAlreadySet();
+    error RewardsDelayPending();
+    error NoProposedRewards();
+    error IdoAlreadyEnded();
+    error NftCapExceeded();
+    error GrantExceedsImport();
 
     constructor(
         address usdt_,
@@ -150,6 +174,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         ambassadorMin = params.ambassadorMin;
         partnerMin = params.partnerMin;
         directReferralBps = params.directReferralBps;
+        if (params.rewardsDelay == 0 || params.nftCap == 0) revert InvalidSchedule();
+        rewardsDelay = params.rewardsDelay;
+        nftCap = params.nftCap;
     }
 
     function getAccount(
@@ -222,6 +249,16 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         return (amount * tokensPerUsdt) / 1e18;
     }
 
+    /// @notice NFTs earned by volume but not minted because this issuance hit `nftCap`.
+    ///         The next phase grants them from this on-chain figure.
+    function nftDeferred(
+        address account
+    ) public view returns (uint256) {
+        uint256 owed = accounts[account].selfVolume / NFT_UNIT;
+        uint256 minted = nftMinted[account];
+        return owed > minted ? owed - minted : 0;
+    }
+
     function nftRemainder(
         address account
     ) public view returns (uint256) {
@@ -286,17 +323,15 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
 
     function disburse(
         address to,
-        uint256 amount,
-        bool fromOutstanding
-    ) external nonReentrant {
+        uint256 amount
+    ) external nonReentrant whenNotPaused {
         if (msg.sender != rewards) revert NotRewards();
         if (to == address(0) || amount == 0) revert ZeroAddress();
         uint256 bal = usdt.balanceOf(address(this));
         uint256 locked = directReserve();
-        if (!fromOutstanding) locked += _teamOutstanding();
         if (bal < locked + amount) revert InsufficientTreasury();
         usdt.safeTransfer(to, amount);
-        emit TeamDisbursed(to, amount, fromOutstanding);
+        emit TeamDisbursed(to, amount);
     }
 
     function freezeImport() external onlyOwner {
@@ -311,6 +346,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         if (saleOpenedAt == 0) {
             saleOpenedAt = block.timestamp;
             saleOpenedBlock = block.number;
+            if (nftInterest != address(0)) INemoNftInterest(nftInterest).noteSaleOpened();
         }
         emit SaleOpened();
     }
@@ -318,6 +354,16 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     function closeSale() external onlyOwner {
         saleOpen = false;
         emit SaleClosed();
+    }
+
+    /// @notice Stops NFT interest for good. Closing the sale does not do this.
+    function endIdo() external onlyOwner {
+        if (idoEnded) revert IdoAlreadyEnded();
+        idoEnded = true;
+        if (nftInterest != address(0)) {
+            idoEndedWeek = INemoNftInterest(nftInterest).interestWeek(block.timestamp) + 1;
+        }
+        emit IdoEnded(idoEndedWeek);
     }
 
     function pause() external onlyOwner {
@@ -381,12 +427,71 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         emit IdentityThresholdsUpdated(ambassadorMin_, partnerMin_);
     }
 
+    /// @notice First rewards address is immediate. Later changes use `proposeRewards`.
     function setRewards(
         address rewards_
     ) external onlyOwner {
+        if (rewards != address(0)) revert RewardsAlreadySet();
         if (rewards_ == address(0)) revert ZeroAddress();
         rewards = rewards_;
         emit RewardsUpdated(rewards_);
+    }
+
+    function proposeRewards(
+        address next
+    ) external onlyOwner {
+        if (rewards == address(0)) revert NoProposedRewards();
+        if (next == address(0)) revert ZeroAddress();
+        proposedRewards = next;
+        proposedRewardsEta = block.timestamp + rewardsDelay;
+        emit RewardsProposed(next, proposedRewardsEta);
+    }
+
+    function acceptRewards() external onlyOwner {
+        if (proposedRewards == address(0)) revert NoProposedRewards();
+        if (block.timestamp < proposedRewardsEta) revert RewardsDelayPending();
+        rewards = proposedRewards;
+        proposedRewards = address(0);
+        proposedRewardsEta = 0;
+        emit RewardsUpdated(rewards);
+    }
+
+    function cancelRewards() external onlyOwner {
+        if (proposedRewards == address(0)) revert NoProposedRewards();
+        address next = proposedRewards;
+        proposedRewards = address(0);
+        proposedRewardsEta = 0;
+        emit RewardsProposalCancelled(next);
+    }
+
+    /// @notice One-time link to the NFT interest contract.
+    function setNftInterest(
+        address interest_
+    ) external onlyOwner {
+        if (nftInterest != address(0)) revert InterestAlreadySet();
+        if (interest_ == address(0)) revert ZeroAddress();
+        nftInterest = interest_;
+        if (saleOpenedAt != 0) INemoNftInterest(interest_).noteSaleOpened();
+        if (idoEnded && idoEndedWeek == 0) {
+            idoEndedWeek = INemoNftInterest(interest_).interestWeek(block.timestamp) + 1;
+        }
+        emit NftInterestUpdated(interest_);
+    }
+
+    /// @notice Manual NFT grant for early accounts. Settles finished weeks at the
+    ///         old balance first, then mints. Does not change volume or `nftMinted`.
+    function grantNft(
+        address account,
+        uint256 count
+    ) external onlyOwner nonReentrant {
+        if (account == address(0)) revert ZeroAddress();
+        if (count == 0) revert AmountTooSmall();
+        if (!accounts[account].registered) revert NotRegistered();
+        if (grantedNfts[account] + count > importedNfts[account]) revert GrantExceedsImport();
+        grantedNfts[account] += count;
+        _settleInterest(account);
+        nft.mint(account, count);
+        emit NftGranted(account, count);
     }
 
     function setNemoSchedule(
@@ -462,7 +567,13 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
             address account = wallets[i];
             if (!accounts[account].registered) revert NotRegistered();
             accounts[account].selfVolume = selfVolumes[i];
-            nftMinted[account] = selfVolumes[i] / NFT_UNIT;
+            uint256 nfts = selfVolumes[i] / NFT_UNIT;
+            uint256 prev = importedNfts[account];
+            if (grantedNfts[account] > nfts) revert GrantExceedsImport();
+            nftsAllocated = nftsAllocated - prev + nfts;
+            if (nftsAllocated > nftCap) revert NftCapExceeded();
+            importedNfts[account] = nfts;
+            nftMinted[account] = nfts;
             emit VolumeImported(account, selfVolumes[i]);
         }
     }
@@ -553,8 +664,17 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
             totalNemoAllocated += nemoAmount;
             emit NemoAllocated(account, nemoAmount);
         }
+        _settleInterest(account);
         _syncNfts(account);
         emit Contributed(account, amount, accounts[account].selfVolume, nemoAmount);
+    }
+
+    function _settleInterest(
+        address account
+    ) internal {
+        if (nftInterest != address(0)) {
+            INemoNftInterest(nftInterest).settle(account);
+        }
     }
 
     function _syncNfts(
@@ -564,9 +684,15 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         uint256 minted = nftMinted[account];
         if (owed <= minted) return;
         uint256 count = owed - minted;
-        nftMinted[account] = owed;
-        nft.mint(account, count);
-        emit NftMinted(account, count, owed);
+        uint256 room = nftCap - nftsAllocated;
+        uint256 mintNow = count < room ? count : room;
+        if (mintNow > 0) {
+            nftsAllocated += mintNow;
+            nftMinted[account] = minted + mintNow;
+            nft.mint(account, mintNow);
+            emit NftMinted(account, mintNow, minted + mintNow);
+        }
+        if (mintNow < count) emit NftDeferred(account, count - mintNow);
     }
 
     function _settleDirect(

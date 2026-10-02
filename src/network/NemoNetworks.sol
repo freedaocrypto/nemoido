@@ -6,10 +6,8 @@ library NemoNetworks {
     struct Params {
         uint256 chainId;
         address usdt;
-        uint256 rootTimelock;
-        uint256 challengeBond;
-        uint256 advancePerAccountCap;
-        uint256 advanceDailyCap;
+        uint256 rewardsDelay;
+        uint256 nftCap;
         uint256 directReferralBps;
         uint256 minIdo;
         uint256 minReferralAmount;
@@ -23,10 +21,7 @@ library NemoNetworks {
     function local() internal pure returns (Params memory p) {
         p.chainId = 31337;
         p.usdt = address(0);
-        p.rootTimelock = 60;
-        p.challengeBond = 1e18;
-        p.advancePerAccountCap = 1_000e18;
-        p.advanceDailyCap = 100_000e18;
+        p.rewardsDelay = 60;
         _shared(p);
         p.weekDuration = 30;
         p.weekByBlock = true;
@@ -35,10 +30,7 @@ library NemoNetworks {
     function bscTestnet() internal pure returns (Params memory p) {
         p.chainId = 97;
         p.usdt = address(0);
-        p.rootTimelock = 1 hours;
-        p.challengeBond = 10e18;
-        p.advancePerAccountCap = 500e18;
-        p.advanceDailyCap = 50_000e18;
+        p.rewardsDelay = 1 hours;
         _shared(p);
         p.weekDuration = 1 hours;
         p.weekByBlock = false;
@@ -47,10 +39,7 @@ library NemoNetworks {
     function bscMainnet() internal pure returns (Params memory p) {
         p.chainId = 56;
         p.usdt = 0x55d398326f99059fF775485246999027B3197955;
-        p.rootTimelock = 24 hours;
-        p.challengeBond = 100e18;
-        p.advancePerAccountCap = 1_000e18;
-        p.advanceDailyCap = 100_000e18;
+        p.rewardsDelay = 24 hours;
         _shared(p);
         p.weekDuration = 7 days;
         p.weekByBlock = false;
@@ -59,6 +48,7 @@ library NemoNetworks {
     function _shared(
         Params memory p
     ) private pure {
+        p.nftCap = 10_000;
         p.directReferralBps = 1000;
         p.minIdo = 1e18;
         p.minReferralAmount = 100e18;

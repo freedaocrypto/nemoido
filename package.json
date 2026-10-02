@@ -7,7 +7,15 @@
     "import:dry": "node scripts/import-onchain.mjs",
     "import:apply": "node scripts/import-onchain.mjs --apply",
     "test:js": "node --test scripts/lib/*.test.mjs",
-    "scale:anvil": "node scripts/scale-anvil.mjs"
+    "scale:anvil": "node scripts/scale-anvil.mjs",
+    "e2e:postgres": "bash scripts/e2e-postgres.sh",
+    "export:deferred": "node scripts/export-deferred-nfts.mjs",
+    "index:rewards": "node scripts/index-rewards.mjs",
+    "publish:root": "node scripts/publish-root.mjs",
+    "verify:root": "node scripts/verify-root.mjs",
+    "interest:boundary": "node scripts/lock-interest-boundary.mjs",
+    "mint:test-usdt": "node scripts/mint-test-usdt.mjs",
+    "import:testnet": "node scripts/import-prod-to-testnet.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",

@@ -41,6 +41,11 @@ export function bind(state, account, referrer) {
   state.referrer.set(account, referrer || null);
 }
 
+/** Historical self volume. Does not pay direct or team rewards and does not bump uplines. */
+export function seedSelf(state, account, amount) {
+  state.self.set(account, BigInt(amount));
+}
+
 /**
  * Apply one deposit. Qualification is read before this deposit is added to upline volume.
  * The depositor's own tier does not compress upline (prevBps starts at 0).

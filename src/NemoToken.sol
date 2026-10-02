@@ -19,9 +19,11 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
     uint256 public constant CAP = 1_000_000_000e18;
 
     address public minter;
+    address public interestMinter;
     mapping(address => bool) public transferAllowlist;
 
     event MinterUpdated(address indexed minter);
+    event InterestMinterUpdated(address indexed interestMinter);
     event TransferAllowlistUpdated(address indexed account, bool allowed);
 
     error ZeroAddress();
@@ -44,6 +46,14 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         emit MinterUpdated(minter_);
     }
 
+    function setInterestMinter(
+        address interestMinter_
+    ) external onlyOwner {
+        if (interestMinter_ == address(0)) revert ZeroAddress();
+        interestMinter = interestMinter_;
+        emit InterestMinterUpdated(interestMinter_);
+    }
+
     function setTransferAllowlist(
         address account,
         bool allowed
@@ -53,12 +63,12 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         emit TransferAllowlistUpdated(account, allowed);
     }
 
-    /// @notice Vault minter (contribute path) or Owner (campaign inventory) may mint.
+    /// @notice Vault (deposits), interest minter (NFT yield), or Owner (manual grants) may mint.
     function mint(
         address to,
         uint256 amount
     ) external {
-        if (msg.sender != minter && msg.sender != owner()) revert NotAuthorized();
+        if (msg.sender != minter && msg.sender != interestMinter && msg.sender != owner()) revert NotAuthorized();
         if (to == address(0)) revert ZeroAddress();
         if (totalSupply() + amount > CAP) revert CapExceeded();
         _mint(to, amount);

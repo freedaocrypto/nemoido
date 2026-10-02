@@ -1,204 +1,316 @@
 # nemoido 功能报告
 
-日期：2026-09-23  
-版本：链下网体结算（`localdev` 工作区，未提交）  
-范围：`src/NemoIdo.sol`、`src/NemoRewards.sol`、`src/INemoRewards.sol`、`src/NemoToken.sol`、`src/NemoNFT.sol`、`src/network/NemoNetworks.sol`、`src/MockUSDT.sol`，部署脚本，链下计算与导入脚本。  
-配套安全报告：[SECURITY-AUDIT-2026-09-23.md](SECURITY-AUDIT-2026-09-23.md)
+日期：2026-09-24（第五版，链下修复并用真实 Postgres 验证之后）  
+代码状态：提交 `11e8efd` 加上工作区全部未提交改动（分支 `localdev`）  
+范围：`src/` 下全部合约、`script/Deploy.s.sol`、`scripts/` 下的链下计算、索引、发布、核对、导入和周界脚本  
+配套安全报告：[SECURITY-AUDIT-2026-09-24-R6.md](SECURITY-AUDIT-2026-09-24-R6.md)。R5、R4、R3、R2 和第一版保留为历史
 
 ---
 
 ## 1. 系统总览
 
-金库只处理入金、邀请、直推、铸币和导入。多级网体奖在链下计算，链上用累计 Merkle root 定权，EIP-712 签名只能垫付 root 之上的增量。
+设计遵循三条原则：
+
+1. **合约保持简单。** 金库只做入金、邀请、直推、铸币、导入和补发 NFT。
+2. **用户的钱实时可取。** 直推奖在合约上记账，用户随时自己提现。网体奖的 root 一发布就能提现。
+3. **网体奖在链下算。** 索引器把事件写进 Postgres 并实时计算。管理员在自己电脑上用 publisher 地址发布累计 Merkle root：默认每 7 天一次，也可以随时发布。社区用 `verify-root` 脚本核对公开明细，对不上就在链下协商、下一期更正。合约里没有挑战，也不会因此暂停提现。
 
 ```mermaid
 flowchart LR
-  User[用户] -->|register / contribute / claim| Vault[NemoIdo]
-  Vault -->|mint| Token[NemoToken]
-  Vault -->|每500U一枚| NFT[NemoNFT]
-  Calc[链下计算器] -->|submitRoot| Rewards[NemoRewards]
-  Signer[advanceSigner] -->|EIP712签名| User
-  User -->|claim 或 claimAdvance| Rewards
+  User[用户] -->|register / contribute / claim| Vault[NemoIdo 金库]
+  Vault -->|mint 入金所得| Token[NemoToken NEMOKEY]
+  Vault -->|每 500U 一张| NFT[NemoNFT]
+  Vault -->|NFT 变化前 settle| Interest[NemoNftInterest]
+  User -->|claim 周息| Interest
+  Interest -->|mint 周息| Token
+  Vault -.事件.-> Indexer[index-rewards.mjs]
+  Rewards -.TeamClaimed.-> Indexer
+  Indexer --> DB[(Postgres nemo_*)]
+  DB --> Publisher[publish-root.mjs 本地电脑]
+  Publisher -->|publishRoot 立即生效| Rewards[NemoRewards]
+  Publisher -->|公开明细 JSON| Public[社区 verify-root.mjs]
+  User -->|claim 累计额 + proof| Rewards
   Rewards -->|disburse| Vault
   Vault -->|USDT| User
-  Owner[Owner] -->|参数 / 导入 / 抽库 / setRewards| Vault
-  Owner -->|submitRoot / cancel / dismiss| Rewards
 ```
 
-### 1.1 信任边界
+### 1.1 角色与权限
 
 | 角色 | 能做什么 | 不能做什么 |
 |------|----------|------------|
-| 用户 | 注册、绑定、入金、领直推、领网体奖、挑战待生效 root | 改别人的数据；绕过 25% 帽 |
-| Owner（金库） | 导入、开关售、暂停、调参数、抽走非准备金、换 rewards 地址 | 直接抽走直推准备金 |
-| Owner（奖励合约） | 提交 root、撤销待生效 root、裁决挑战、换签名人 | 跳过 timelock；让网体累计超过 25% 帽 |
-| advanceSigner | 签发垫付凭证 | 突破单账户日帽和全站日帽 |
-| 链下计算器 | 读链上事件、算累计网体奖、组 Merkle 树 | 本身没有链上权限，结果要经 Owner 提交 |
-| 任何人 | `activateRoot`（到期且无挑战时） | — |
+| 用户 | 注册、绑定上级、入金、领直推、领网体奖、领 NFT 周息 | 改别人的数据；超过 25% 帽领网体奖 |
+| 金库 Owner | 导入、冻结导入、开售、关售、结束 IDO、暂停、调参数、提走非准备金、切换奖励合约（首次之后要等延迟）、设置周息合约（一次）、给早期用户补发 NFT | 动用直推准备金和已发布未领的网体奖；补发超过导入张数；让 NFT 超过 1 万张 |
+| 奖励合约 Owner | 指定 publisher、设置单次增量上限、自己也可以发布 root | 让直推加网体超过 25% 帽；把累计额设得低于已付总额 |
+| publisher | 发布 root，发布即生效 | 改参数、提取资金 |
+| 周息合约 Owner | 改周息档位（从当周起生效）、下调全站上限和单户上限 | 改已结束的周；单档每周超过 10%；全站上限超过 5000 万枚 |
+| NEMOKEY Owner | 设置铸币地址、周息铸币地址、转账白名单、直接铸币（早期用户本金） | 超过 10 亿枚 CAP |
+| NFT Owner | 设置铸币地址（只能一次） | 转移任何人的 NFT |
+| 社区 | 下载公开明细，用 `verify-root.mjs` 重算 root | 链上阻止发布（设计上没有这个入口） |
+
+所有合约都用 `Ownable2Step`，可以转给多签。新 Owner 要调用 `acceptOwnership`。Owner 权限的风险清单见安全报告第 5 节，项目方已确认保留。
 
 ---
 
-## 2. 合约函数表
+## 2. 合约函数
 
 ### 2.1 NemoIdo（金库）
 
-继承 `Ownable2Step`、`Pausable`、`ReentrancyGuard`。
+继承 `Ownable2Step`、`Pausable`、`ReentrancyGuard`。常量：`REWARD_CAP_BPS = 2500`、`NFT_UNIT = 500e18`。构造时写入的不可变参数：`rewardsDelay`、`nftCap`。
 
 **用户**
 
-| 函数 | 门禁 | 状态变化 | 事件 |
-|------|------|----------|------|
-| `register(code, referrerCode)` | `whenNotPaused` | 写邀请码、`registered`；可选绑定上级、`hasChildren[上级]` | `Registered` |
-| `bindReferrer(referrerCode)` | `whenNotPaused`；已注册且未绑定；自己没有下级 | 写 `referrer` | `ReferrerBound` |
-| `contribute(amount)` | `whenNotPaused` + `nonReentrant`；已开售、已注册、≥ `minIdo` | 收 USDT、`selfVolume`、`totalContributed`；可能记直推；mint NEMOKEY 和 NFT | `Contributed`、`DirectRewardAccrued`、`NemoAllocated`、`NftMinted` |
-| `registerAndContribute(...)` | 同上 | 未注册时先注册，再入金。已注册时忽略传入的邀请码 | 同上 |
-| `claim()` | `whenNotPaused` + `nonReentrant` | `claimed`、`totalClaimed`，转出直推 USDT | `Claimed` |
+| 函数 | 条件 | 效果 | 事件 |
+|------|------|------|------|
+| `register(code, referrerCode)` | 未暂停；邀请码为大写字母或数字，且没人用过 | 登记邀请码；带上级码时同时绑定，并设置 `hasChildren[上级] = true` | `Registered` |
+| `bindReferrer(referrerCode)` | 未暂停；已注册、还没绑定、自己没有下级 | 写入上级。「没有下级才能绑」保证了邀请树不会成环 | `ReferrerBound` |
+| `contribute(amount)` | 未暂停；已开售、已注册、`amount ≥ minIdo` | 见下方步骤 | `Contributed`、`DirectRewardAccrued`、`NemoAllocated`、`NftMinted` |
+| `registerAndContribute(...)` | 同上 | 没注册就先注册再入金；已注册时忽略传入的邀请码 | 同上 |
+| `claim()` | 未暂停 | 把可领直推全部转给自己 | `Claimed` |
 
-**奖励合约**
+`contribute` 的步骤：
 
-| 函数 | 门禁 | 说明 |
+1. 收 USDT。
+2. 本人业绩和全站总额增加。
+3. `amount ≥ minReferralAmount`（100U）时，给上级记 `amount × 10%` 直推。
+4. 按 `tokensFor(amount)` 铸 NEMOKEY，默认 1U = 100 枚。
+5. 调用周息合约 `settle`，按旧张数结清已经结束的周。
+6. 每满 500U 补铸 NFT。若全站已达 1 万张上限，本期铸满剩余额度，超出的记为待发（`NftDeferred` 事件），入金不回滚。
+
+**奖励合约专用**
+
+| 函数 | 条件 | 效果 |
 |------|------|------|
-| `disburse(to, amount, fromOutstanding)` | `msg.sender == rewards` + `nonReentrant` | 锁定额 = 直推准备金；垫付（`fromOutstanding=false`）时再加上当期 outstanding。余额不足时 revert |
+| `disburse(to, amount)` | 只有 `rewards` 地址能调；未暂停；有重入锁 | 余额扣掉直推准备金后够付才转出 | 
 
 **Owner**
 
 | 函数 | 说明 |
 |------|------|
-| `importUsers` / `importReferrers` / `importVolumes` | 冻结前可调。只写用户、邀请和本人业绩；`nftMinted = self / 500`，不补铸 |
-| `freezeImport` / `openSale` / `closeSale` | 开售必须先冻结导入 |
-| `pause` / `unpause` | 挡住注册、入金、直推领取；**不挡** `disburse` |
-| `withdrawTreasury(to, amount)` | 最多提走 `balance - reservedRewards` |
-| `withdrawUnsoldNemo` | 取回金库持有的 NEMOKEY（正常流程下为 0） |
-| `setDirectReferralBps` | ≤ 2500 |
+| `importUsers` / `importReferrers` / `importVolumes` | 冻结导入之前可用。只写地址、邀请码、上级和本人业绩。`importVolumes` 把 `importedNfts` 和 `nftMinted` 设为 `业绩 / 500`，并占用 1 万张的额度；不铸 NEMOKEY，也不铸 NFT |
+| `grantNft(account, count)` | 给已导入的早期用户补发 NFT，累计不得超过 `importedNfts`。先按旧张数结清周息，再铸造 |
+| `freezeImport` | 冻结导入，一次性。必须先冻结才能开售 |
+| `openSale` | 开售。第一次开售时记录时间和区块，并通知周息合约从这一周开始计息 |
+| `closeSale` | 只关闭入金，不影响周息。之后可以再次 `openSale` |
+| `endIdo()` | 一次性。周息计到当前这一周为止（`idoEndedWeek = 当前周 + 1`）。**不会关闭入金**，要先 `closeSale` |
+| `pause` / `unpause` | 挡住注册、绑定、入金、直推领取和网体付款。周息领取不受金库暂停影响，要暂停 NEMOKEY 才能挡住 |
+| `withdrawTreasury(to, amount)` | 最多提取 `treasuryWithdrawable` |
+| `withdrawUnsoldNemo` | 取回金库里的 NEMOKEY。正常流程下金库不持有 |
+| `setDirectReferralBps` | 上限 2500 |
 | `setMinReferralAmount` / `setMinIdo` / `setIdentityThresholds` | 门槛参数 |
-| `setRewards(addr)` | 换奖励合约地址，随时生效，没有延迟 |
-| `setTokensPerUsdt` / `setNemoSchedule` / `setNemoBonus` | 铸币汇率；周递减只影响 `quote()` 视图 |
+| `setRewards(addr)` | 只能在第一次设置时用，立即生效 |
+| `proposeRewards(addr)` → `acceptRewards()` / `cancelRewards()` | 之后更换奖励合约要先提议，等 `rewardsDelay` 后接受；等待期间可以取消 |
+| `setNftInterest(addr)` | 只能设一次。若已经开售，立即通知周息合约开始计息 |
+| `setTokensPerUsdt` / `setNemoSchedule` / `setNemoBonus` | 铸币比例。周递减只影响 `quote()` 的显示，实际铸造按 `tokensFor` 计算。周息用的比例要等周息合约调用 `setTiers` 才会更新 |
 
-**视图**：`getAccount`、`pendingOf`、`referrerOf`、`directReserve`、`reservedRewards`、`treasuryWithdrawable`、`roleOf`、`currentWeek`、`tokensPer100`、`tokensFor`、`nftRemainder`、`quote`。
+**只读：** `getAccount`、`pendingOf`、`referrerOf`、`directReserve`、`reservedRewards`、`treasuryWithdrawable`、`roleOf`（探索者、大使 ≥100U、合伙人 ≥1000U）、`currentWeek`、`tokensPer100`、`tokensFor`、`nftRemainder`、`nftDeferred`（达到 1 万张上限后待下一期发放的张数）、`quote`、`nftsAllocated`、`importedNfts`、`grantedNfts`、`idoEnded`、`idoEndedWeek`、`proposedRewards`、`proposedRewardsEta`。
 
 ### 2.2 NemoRewards（网体奖）
 
-继承 `Ownable2Step`、`EIP712("NemoRewards","1")`、`ReentrancyGuard`。不持有奖金 USDT，只持有挑战押金。
+继承 `Ownable2Step`、`ReentrancyGuard`。不持有奖金，USDT 一直在金库里。没有挑战、押金、timelock 和垫付。
 
 | 函数 | 调用方 | 说明 |
 |------|--------|------|
-| `submitRoot(root, contentHash, cumulative)` | Owner | 要求 `cumulative ≥ totalTeamPaid`，且直推 + `cumulative` ≤ 25% 帽。覆盖旧的待生效 root，并退回其挑战押金。计时 `rootTimelock` |
-| `challenge()` | 任何人 | 在 eta 之前、且没人挑战时，押 `challengeBond` USDT |
-| `cancelPending()` | Owner | 撤销待生效 root，退押金 |
-| `dismissChallenge()` | Owner | 驳回挑战，押金转给 Owner |
-| `activateRoot()` | 任何人 | 到期、无挑战、仍满足累计额和帽的检查时，生效 |
-| `claim(cumulative, proof)` | 用户 | 验证叶子，付 `cumulative - claimed`；已经垫付过的部分只入账不转账 |
-| `claimAdvance(cumulative, deadline, sig)` | 用户 | 验证签名、nonce 和 deadline，付增量，受单账户日帽和全站日帽限制 |
-| `setAdvanceSigner` | Owner | 换签名人 |
+| `publishRoot(root, contentHash, cumulative, uri)` | publisher 或 Owner | 立即生效。要求 `root ≠ 0`、`cumulative ≥ totalTeamPaid`、`totalDirectAccrued + cumulative ≤ 25% 帽`。设置了 `maxRootIncrease` 时，还要求 `cumulative ≤ committed + maxRootIncrease`。`uri` 指向公开明细 |
+| `claim(cumulative, proof)` | 用户 | 验证叶子，支付 `cumulative − claimed[用户]`，再检查一次 25% 帽，然后由金库转出 |
+| `setPublisher(addr)` | Owner | 更换发布地址。构造时默认等于 Owner |
+| `setMaxRootIncrease(amount)` | Owner | 单次发布允许的最大增量，0 表示不限。**上线前要设置**（安全报告 R6-M1） |
 
-视图：`outstanding()`、`rewardCap()`、`advanceDigest(...)`。
+**只读：** `merkleRoot`、`contentHash`、`contentUri`、`committed`、`claimed(addr)`、`totalTeamPaid`、`outstanding()`（`committed − totalTeamPaid`）、`rewardCap()`。
 
-### 2.3 NemoToken
+叶子格式和 OpenZeppelin 一致：`keccak256(bytes.concat(keccak256(abi.encode(地址, 累计额))))`。
 
-`nemokey / NEMOKEY`，18 位，`CAP = 1e9 * 1e18`，无预铸。
+### 2.3 NemoNftInterest（NFT 周息）
 
-- `mint`：金库（minter）或 Owner。
-- 转账：`from` 或 `to` 至少一方在 `transferAllowlist` 才放行；mint 和 burn 不受限。
-- `pause`：同时停转账和 mint。暂停期间入金会 revert。
-- `rescue`：取回误转入的其他代币，不能取本代币。
+继承 `Ownable2Step`、`ReentrancyGuard`。IDO 期间按地址上实际持有的 NFT 张数计算 NEMOKEY 周息，用户自己 `claim()`，合约铸给用户。
 
-### 2.4 NemoNFT
+本金 = `NFT 张数 × 500U × 该周版本的 tokensPerUsdt`，默认 1U = 100 枚。
 
-- 仅 minter（金库）可 `mint(to, count)`，按枚循环，`tokenId` 自增。
-- `_update` 禁止两个非零地址之间转移，灵魂绑定。
+| 持有 | 每周 | 例子 |
+|------|------|------|
+| 少于 2 张 | 0 | — |
+| 2 张（1000U） | 1% | 本金 10 万枚，每周 1000 枚 |
+| 10 张（5000U） | 2% | 每周 1 万枚 |
+| 20 张（1 万 U） | 2.5% | 每周 2.5 万枚 |
+| 60 张（3 万 U） | 3% | 每周 9 万枚 |
 
-### 2.5 NemoNetworks
+落在两档之间时取已经达到的最高档。
 
-纯函数库，部署时传入参数；`NemoIdo` 和 `NemoRewards` 的构造函数都校验 `block.chainid`。
+**计息区间：** 从第一次开售的那一周开始，到 `endIdo` 所在的那一周为止（含这一周）。`closeSale` 不影响计息。
 
-| 参数 | local 31337 | bscTestnet 97 | bscMainnet 56 |
-|------|-------------|---------------|---------------|
+**周中变化：** 周中买入或补发的 NFT，当周整周按新张数计算，不按天折算。已结束的周在张数变化前就已结清，所以后买的 NFT 不会抬高以前的周。
+
+**上限**
+
+- 全站：`interestCap` 默认 5000 万枚（10 亿的 5%）。Owner 可以下调，不能调到 5000 万以上。到顶以后，超出的部分不计，也不留存。
+- 单户：终身周息 ≤ `当前张数 × 500U × 最新比例 × accountCapBps`，默认 100%。
+
+**档位修改：** `setTiers` 从当前这一周起生效，同一周内再次修改会覆盖这一版。最多 16 档，门槛严格递增，单档每周 1–10%。每个版本都记下当时的 `tokensPerUsdt`。
+
+**周的划分**
+
+- 主网（chainId 56）按北京时间自然周，截止于周日 00:00:00。每个周日只有一个跨越高度：区块 N 的时间是周六 23:59:xx，N+1 是周日 00:00:xx。合约按时间戳判断。`scripts/lock-interest-boundary.mjs` 用二分查找找出 N，有数据库时写入 `nemo_interest_boundary`，供公示。
+- 本地和 BSC 测试网沿用金库的短周：本地 30 个区块，测试网 1 小时。
+
+| 函数 | 调用方 | 说明 |
+|------|--------|------|
+| `claim()` | 用户 | 结算后把累计额全部铸给自己 |
+| `pending(addr)` | 任何人 | 当前可领数量（含尚未结算的已结束周） |
+| `settle(addr)` | 只有金库 | NFT 变化前结算 |
+| `noteSaleOpened()` | 只有金库 | 记录起算周，只生效一次 |
+| `setTiers` / `setInterestCap` / `setAccountCapBps` | Owner | 见上。分别发出 `TiersUpdated`、`InterestCapUpdated`、`AccountCapBpsUpdated` 事件 |
+| `interestWeek(ts)` / `weekBoundary(week)` / `tiersOf(id)` | 任何人 | 周编号、主网周界时间、各版本档位 |
+
+**早期用户：** 迁到主网时只导入地址、邀请码、上级和入金。NEMOKEY 本金由 Owner 手动铸造；NFT 用 `grantNft` 补发。补发之前的周不计息，到账那一周起自动计息。
+
+### 2.4 NemoToken（NEMOKEY）
+
+- 18 位小数，`CAP = 10 亿枚`，不预铸。
+- 铸币方：金库（入金）、`interestMinter`（周息合约）、Owner（早期用户本金）。Owner 手动铸造的数量不计入金库的 `totalNemoAllocated`。
+- 默认不可转。转账时 `from` 或 `to` 至少一方在 Owner 设置的白名单里才放行；铸造和销毁不受限制。
+- `pause` 同时停止转账和铸造。暂停期间入金和领周息都会失败。
+- `rescue` 可以取回误转进来的其他代币，不能取 NEMOKEY 本身。
+
+### 2.5 NemoNFT
+
+- 构造参数 `(owner, name, symbol)`。
+- 只有金库能铸，编号自增，逐张铸造。
+- `setMinter` 只能调用一次，之后不能更换铸币地址。
+- 除铸造和销毁外禁止转移（灵魂绑定）。
+- 周息由 `NemoNftInterest` 支付，这张合约里没有收益逻辑。
+
+### 2.6 NemoNetworks（网络参数）
+
+部署时传入。`NemoIdo` 和 `NemoRewards` 的构造函数都会检查 `block.chainid`，参数和链不一致就失败。
+
+| 参数 | 本地 31337 | BSC 测试网 97 | BSC 主网 56 |
+|------|-----------|---------------|-------------|
 | USDT | 部署 MockUSDT | 部署 MockUSDT | `0x55d398326f99059fF775485246999027B3197955` |
-| rootTimelock | 60 秒 | 1 小时 | 24 小时 |
-| challengeBond | 1 USDT | 10 USDT | 100 USDT |
-| 单账户日垫付帽 | 1,000 | 500 | 1,000 |
-| 全站日垫付帽 | 100,000 | 50,000 | 100,000 |
-| 周 | 30 区块 | 1 小时 | 7 天 |
-| 直推 / 最低入金 / 直推门槛 | 10% / 1 / 100 | 同左 | 同左 |
-| NEMOKEY 汇率 | 1U → 100 | 同左 | 同左 |
+| 更换奖励合约延迟 `rewardsDelay` | 60 秒 | 1 小时 | 24 小时 |
+| NFT 上限 `nftCap` | 1 万张 | 1 万张 | 1 万张 |
+| 一周 | 30 个区块 | 1 小时 | 7 天（周息按北京时间自然周） |
+| 直推 / 最低入金 / 直推门槛 | 10% / 1U / 100U | 同左 | 同左 |
+| NEMOKEY 比例 | 1U → 100 枚 | 同左 | 同左 |
+| 大使 / 合伙人门槛 | 100U / 1000U | 同左 | 同左 |
 
 ---
 
-## 3. 资金流与准备金
+## 3. 资金与准备金
 
 ```
-入金 amount → 金库余额 += amount
-  直推：directRewards[上级] += amount × 10%（amount ≥ 100U）
-直推领取 claim() → 金库转出
-网体领取 → NemoRewards → vault.disburse → 金库转出
-Owner 抽库 withdrawTreasury ≤ balance − reservedRewards
+入金 amount → 金库 USDT += amount
+  直推：上级 directRewards += amount × 10%（amount ≥ 100U）
+直推领取  NemoIdo.claim()            → 金库转出
+网体领取  NemoRewards.claim()        → vault.disburse → 金库转出
+Owner 提取 withdrawTreasury          ≤ treasuryWithdrawable
+NFT 周息  NemoNftInterest.claim()    → 新铸 NEMOKEY，不动 USDT
 ```
 
-- `directReserve = totalDirectAccrued − totalClaimed`
-- `outstanding = committed − rootPaid`（当期 root 还没被证明领走的部分）
-- `reservedRewards = directReserve + outstanding`
+| 量 | 公式 |
+|----|------|
+| 直推准备金 `directReserve` | `totalDirectAccrued − totalClaimed` |
+| 网体未领 `outstanding` | `committed − totalTeamPaid`（当前 root） |
+| 总准备金 `reservedRewards` | `directReserve + outstanding` |
+| 可提（非准备金）`treasuryWithdrawable` | `USDT 余额 − reservedRewards` |
+| 25% 帽 | `totalDirectAccrued + totalTeamPaid ≤ totalContributed × 25%`，常量，不能改 |
 
-**不在准备金里的：** 待生效 root 的金额；链下已经算出、还没提交 root 的网体奖。它们是否有钱可付，取决于 Owner 没有提前抽库。详见安全报告 M-1、M-2。
+网体付款 `disburse` 只锁定直推准备金，所以即使 root 申报的累计额偏低，只要金库里还有钱，用户仍然能领到。
 
-**25% 帽：** `totalDirectAccrued + totalTeamPaid ≤ totalContributed × 25%`。`submitRoot`、`activateRoot`、每次网体付款都检查。常量，没有 setter。
+**没有链上保障的钱：** 链下已经算出、还没写进 root 的网体奖。它们能不能付出来，取决于 Owner 没有提前提走（安全报告 A-1）。root 的累计额由发布者申报，合约无法核对（A-2），由社区用 `verify-root` 事后核对。
 
 ---
 
-## 4. 网体结算生命周期
+## 4. 网体奖的生命周期
 
 ```mermaid
 sequenceDiagram
-  participant Calc as 链下计算器
-  participant Owner
-  participant R as NemoRewards
-  participant U as 用户
   participant V as NemoIdo
-  Calc->>Owner: 叶子 (地址, 累计额), root, 合计
-  Owner->>R: submitRoot
-  Note over R: timelock 窗口, 任何人可 challenge
-  U->>R: activateRoot (到期后任何人)
+  participant I as 索引器
+  participant DB as Postgres
+  participant P as 发布器（本地电脑）
+  participant R as NemoRewards
+  participant C as 社区
+  participant U as 用户
+  U->>V: contribute
+  V-->>I: Contributed 事件
+  I->>DB: 更新业绩和累计网体奖
+  Note over DB: 页面实时显示「预计网体奖」
+  P->>DB: 读取累计额，组树
+  P->>R: publishRoot（publisher 私钥），立即生效
+  P->>DB: 写 root 和 proof
+  P-->>C: 公开明细 JSON（uri）
+  C->>C: verify-root 重算，对不上就链下协商
+  U->>DB: 前端取累计额和 proof
   U->>R: claim(cumulative, proof)
-  R->>V: disburse(to, 增量, true)
+  R->>V: disburse(用户, 增量)
   V->>U: USDT
+  R-->>I: TeamClaimed，库里记已领
 ```
 
-### 4.1 累计记账
+### 4.1 合约记账
 
 | 变量 | 含义 |
 |------|------|
-| `claimed[a]` | 已经转给 a 的网体 USDT（Merkle + 垫付） |
-| `rootAttributed[a]` | a 已证明过的最高叶子累计额 |
-| `committed` | 当期 root 的累计合计（Owner 申报） |
-| `rootPaid` | `committed` 中已由证明归因的部分，包括垫付过、这次只入账的金额 |
-| `totalTeamPaid` | 全站网体已转出总额 |
+| `claimed[a]` | 已经转给 a 的网体 USDT 累计额 |
+| `committed` | 当前 root 申报的累计合计 |
+| `totalTeamPaid` | 全站网体奖已转出总额 |
 
-`claim` 的处理顺序：
+`claim` 的步骤：
 
-1. 叶子累计额低于 `rootAttributed` 时 revert。
-2. `pay = max(0, cumulative − claimed)`，检查 25% 帽。
-3. `span = cumulative − rootAttributed`，`rootPaid += span`（其中 `span − pay` 是垫付过、只入账的部分）。
-4. `pay > 0` 时 `disburse(..., true)`。
+1. 验证叶子。
+2. 累计额低于 `claimed` 就失败；相等就报 `NothingToClaim`。
+3. 检查 25% 帽。
+4. 记账后由金库转出增量，发出 `TeamClaimed`。
 
-`claimAdvance` 只加 `claimed` 和 `totalTeamPaid`，不动 `rootPaid`。所以垫付的钱要等用户之后提交证明，才会从 `outstanding` 里扣掉。
+同一片叶子领第二次不会再付钱。漏领几期也没关系：累计额只增不减，下一次领取时一次补齐。
 
-### 4.2 垫付凭证
+### 4.2 从产生到能提现要多久
 
-EIP-712 类型：`Advance(address account,uint256 cumulative,uint256 nonce,uint256 deadline)`，域为 `NemoRewards` / `1` / chainId / 合约地址。每个账户的 nonce 顺序递增。单账户额度和全站额度都按 `block.timestamp / 1 days` 的自然日重置。
+入金后，索引器在确认区块数（主网默认 15 个）之后写库，页面马上能看到预计金额。root 发布后立即可以提现，没有生效等待。默认每 7 天发布一次，管理员也可以随时发布，所以等待时间就是距离下一次发布还有多久。
 
 ---
 
-## 5. 链下计算
+## 5. 链下计算与数据库
 
-`scripts/lib/team-reward.mjs`，口径与已删除的链上模块一致：
+### 5.1 计算规则（`scripts/lib/team-reward.mjs`）
 
-- 资格 = 本人 + 伞下，费率取本笔 bump 之前的资格。
-- 入金者自己的档位不压缩上级，`prevBps` 从 0 起。
-- 档位：500/3%、2k/5%、1 万/7%、3 万/9%、6 万/10%。
-- 极差走完后，只做一份 6 万平级抽成，给最近的 10% 祖先，不跳级。
+- 资格 = 本人业绩 + 伞下业绩，按本笔入金加进去之前的数值定档。
+- 档位：500U / 3%、2000U / 5%、1 万 / 7%、3 万 / 9%、6 万 / 10%。
+- 极差：沿上级链向上走，每人拿「自己的档位 − 下面已经发出的最高档位」。入金者自己的档位不参与，从 0 开始算。
+- 6 万平级抽成：链上第一个达到 10% 的人（记为 D）拿到极差以后，再往上找最近的另一个 10% 祖先，给他 D 这笔网体奖的 10%。只做一次，不跳级。
+- 导入的历史业绩只写本人业绩，不计入上级伞下业绩，不产生奖励，也不计入 25% 帽的分母（安全报告 R6-I4，请业务方确认）。
 
-`scripts/fixtures/team-golden.json` 冻结 ABCD 和平级抽成数字，`npm run test:js` 回归。
+`scripts/fixtures/team-golden.json` 固定了 ABCD 和平级抽成的标准答案，`npm run test:js` 会对照检查。
 
-`scripts/lib/merkle.mjs` 采用 OpenZeppelin 双哈希叶子、排序配对、奇数节点上提。多叶子证明已在 Anvil 上被合约接受。
+### 5.2 事件映射（`scripts/lib/reward-index.mjs`）
+
+| 事件 | 处理 |
+|------|------|
+| `Registered` / `UserImported` | 建账户；带上级时绑定 |
+| `ReferrerBound` / `ReferrerImported` | 绑定上级 |
+| `VolumeImported` | 设置本人业绩，不向上累计 |
+| `Contributed` | 按 5.1 计算直推和网体奖 |
+| `TeamClaimed`（需设置 `REWARDS_ADDRESS`） | 记录已领累计额 |
+
+日志按（区块号，日志序号）排序后依次重放。
+
+### 5.3 数据表（`scripts/lib/reward-db.mjs`，启动时自动建表）
+
+| 表 | 主键 | 内容 |
+|----|------|------|
+| `nemo_indexer_state` | `chain_id, ido_address` | 已处理到的区块、奖励合约地址 |
+| `nemo_team_account` | `chain_id, ido_address, wallet` | 上级、本人业绩、伞下业绩、累计网体奖、直推（显示用）、已领 |
+| `nemo_team_root` | `chain_id, ido_address, root` | 每期 root、`contentHash`、累计合计、交易哈希、是否生效 |
+| `nemo_team_proof` | `chain_id, ido_address, root, wallet` | 每个地址在每期 root 下的累计额和 proof |
+| `nemo_interest_boundary` | 周编号 | 主网每周的截止区块 N |
+
+金额都以 wei 字符串保存。账户表和检查点在同一个事务里写入。
+
+同一条链上的两套金库（例如本期和雷迪森）可以共用一个库，读写都带 `IDO_ADDRESS`。旧表如果还是旧主键，脚本启动时会补上 `ido_address` 并更换主键。前端只展示 `active = true` 的 root；发布交易发出之前，这一期的 proof 先以未生效状态入库。
+
+### 5.4 Merkle 与公开核对
+
+- `scripts/lib/merkle.mjs`：和 OpenZeppelin `MerkleProof` 一致，叶子双重哈希，配对前排序，奇数节点直接上提。多叶子 proof 已在 Anvil 上被合约接受。
+- `scripts/verify-root.mjs`：读取公开明细 `{root, contentHash, entries: [[地址, wei], ...]}`，重建树并与 root 对比，不一致时退出码为 1。任何人都可以运行，不需要私钥。
 
 ---
 
@@ -206,30 +318,51 @@ EIP-712 类型：`Advance(address account,uint256 cumulative,uint256 nonce,uint2
 
 | 入口 | 作用 |
 |------|------|
-| `script/Deploy.s.sol` | `NETWORK=local\|bscTestnet\|bscMainnet`。主网需 `ALLOW_MAINNET=true` 才广播 |
-| `script/DeployLocal.s.sol` | 固定 local |
-| `script/SeedLocal.s.sol` | 冻导入、开售、注册 `ROOTANVL` |
-| `scripts/export-freedao.mjs --network` | local / bscTestnet 用 `keccak("nemo-sim:网络:用户id")` 派生地址，写对照表；主网保留真实钱包 |
-| `scripts/import-onchain.mjs` | 批量导入用户、邀请、本人业绩；`--freeze` 可顺手冻结 |
-| `scripts/scale-network.sh` / `scale-anvil.mjs` | 数百人实跑；测试网缺密钥时只打印说明 |
+| `script/Deploy.s.sol` | `NETWORK=local\|bscTestnet\|bscMainnet`。部署代币、NFT、金库、奖励合约、周息合约，并设置周息铸币地址。主网必须设置 `ALLOW_MAINNET=true` 才会广播 |
+| `script/DeployLocal.s.sol` / `SeedLocal.s.sol` | 本地部署；冻结导入、开售、注册根邀请码 `ROOTANVL` |
+| `scripts/export-freedao.mjs --network` | 本地和测试网用 `keccak("nemo-sim:网络:用户id")` 生成模拟地址并输出对照表；主网保留真实钱包 |
+| `scripts/import-onchain.mjs` | 批量导入用户、上级和本人业绩；加 `--freeze` 时顺便冻结 |
+| `scripts/scale-network.sh` / `scale-anvil.mjs` | 数百个账户实跑。测试网缺少密钥时只打印说明 |
+| `scripts/export-deferred-nfts.mjs` | 导出达到 1 万张上限后待下一期发放的 NFT 名单（地址、上级、张数），供下一期导入和 `grantNft` 补发 |
+| `scripts/e2e-postgres.sh` | 用 Docker 起临时 Postgres 和 Anvil，跑完「部署 → 索引 → 发布 → 核对 → 领取」后自动清理 |
 
-部署注意：`OWNER` 不是广播账户时，脚本不会调用 `setRewards`，Owner 需要自己调用；NEMOKEY 和 NFT 的 `transferOwnership` 需要新 Owner `acceptOwnership`（Ownable2Step）。`ADVANCE_SIGNER` 不设时默认是部署账户。
+**部署后需要人工做的事**
+
+1. Owner 不是广播账户时，脚本不会调用 `setRewards` 和 `setNftInterest`，需要 Owner 自己调用。
+2. 奖励合约：`setPublisher(专用地址)`、`setMaxRootIncrease(合理值)`。脚本目前不做这两步（R6-M1）。
+3. 各合约转给多签以后，新 Owner 调用 `acceptOwnership`。
 
 ---
 
-## 7. 运维职责
+## 7. 日常运维
 
-**用户：** 领直推调用 `NemoIdo.claim()`。领网体奖由前端提供累计额和 proof，调用 `NemoRewards.claim`；需要当天拿钱时，用签名调用 `claimAdvance`。自己付 gas。
+**用户**
 
-**管理员：**
+- 领直推：调用 `NemoIdo.claim()`。
+- 领网体奖：前端从数据库取累计额和 proof，用户调用 `NemoRewards.claim`，自己付 gas。
+- 领 NFT 周息：调用 `NemoNftInterest.claim()`。页面用 `pending(address)` 显示可领数量。
+- root 发布前，页面显示的是预计金额，不能提现。
 
-1. 定时从已最终确认的区块读取 `Registered`、`ReferrerBound`、`Contributed` 等事件，按（区块号，logIndex）排序，交给计算器。
-2. 组 Merkle 树，发布叶子 JSON，把哈希作为 `contentHash`，调用 `submitRoot`。
-3. 到期后任何人都可以调用 `activateRoot`。
-4. 出现挑战时，人工决定 `cancelPending` 还是 `dismissChallenge`。
-5. 签名服务按链下余额和额度签发垫付。
+**管理员**
 
-步骤 1–3 和 5 可以全部写成定时任务。漏跑时不用逐日补：下一期 root 用累计额，一次把缺的周期补齐。
+| 步骤 | 命令 | 频率 |
+|------|------|------|
+| 1. 索引 | `npm run index:rewards`（加 `--follow` 常驻） | 发布前，或常驻 |
+| 2. 预览 | `npm run publish:root`（默认只打印，不上链） | 发布前 |
+| 3. 发布 | `node scripts/publish-root.mjs --apply`（本地电脑，干净终端，只设 `PUBLISHER_PRIVATE_KEY`） | 默认每 7 天，或随时 |
+| 4. 公开明细 | 脚本自动写出 `roots/<链>-<金库>-<root>.json`，上传到 `CONTENT_URI` 指向的位置。这个网址会写进交易，要在发布前定好 | 每次发布 |
+| 5. 核对 | `npm run verify:root -- 明细.json` | 任何人。对不上就要求下一期更正 |
+| 6. 锁定周界 | `npm run interest:boundary` | 主网每个北京时间周日 0 点之后 |
+| 7. 结束 IDO | 先 `closeSale`，再 `endIdo` | 一次 |
+
+漏发几期不用逐期补，下一期 root 用的就是累计额。脚本缺少 `DATABASE_URL` 等变量时只打印说明，不会假装已经上链。
+
+**注意事项**（详见安全报告）
+
+- 发布前核对金库余额，够不够付出下一期的增量（A-1）。
+- 发布脚本只读取 `PUBLISHER_PRIVATE_KEY`，并且会核对它等于链上的 `publisher()`。
+- 索引从 `START_BLOCK` 开始，默认每 2000 个区块写一次检查点。索引和发布不能同时跑，后启动的那份会跳过。
+- 应急时同时暂停金库和 NEMOKEY，才能挡住周息领取（R6-L3）。
 
 ---
 
@@ -237,17 +370,19 @@ EIP-712 类型：`Advance(address account,uint256 cumulative,uint256 nonce,uint2
 
 | 项 | 结果 |
 |----|------|
-| Forge（不含跳过的 SimMarket） | 84 项通过；加上审计 PoC 共 93 项 |
-| 覆盖率（行 / 分支） | NemoIdo 88.7% / 43.8%；NemoRewards 91.2% / 43.9%；NemoToken 100% / 50%；NemoNFT 100% / 33.3% |
-| JS | 13 项通过（极差 golden、Merkle、地址映射、导入树） |
-| 300 人 Forge 场景 | 深链与浅链入金 gas 差 &lt; 80k |
-| 300 人 Anvil 实跑 | 299 笔入金；1000U 入金 gas 270,271，深浅一致；垫付后再 Merkle 领取不双付；多叶子 proof 被合约接受 |
-| NFT 开销 | 每 500U 一次 mint；6 万 U 单笔约 120 次，历史实测约 341 万 gas |
+| Forge | 120 项通过，1 项跳过（SimMarket 大规模模拟）。其中奖励合约 8 项、NFT 周息 14 项、R3 复现 16 项、R5 复现 8 项 |
+| JS | 21 项通过：极差标准答案、Merkle、地址映射、导入树、事件重放、北京时间周界、verify-root、分段扫描、按金库地址建表 |
+| 覆盖率（行 / 分支） | NemoIdo 88.6% / 41.5%；NemoRewards 100% / 53.9%；NemoNftInterest 98.5% / 64.3%；NemoToken 100% / 45.5%；NemoNFT 100% / 42.9% |
+| 300 账户 Anvil 实跑（本轮重跑） | 300 个账户、299 笔入金；1000U 入金 gas 深浅链都是 329,747；58 个账户有网体奖，合计 11,507.5U；`publishRoot` 发布后多叶子 proof 领取成功 |
+| 真实 Postgres 端到端（`npm run e2e:postgres`，需要 Docker） | 旧表自动迁移；分段索引 600 条日志；拒绝 `PRIVATE_KEY` 和非 publisher 私钥；先写库再发布；公开文件通过 `verify-root`，改 1 wei 就失败；重复发布仍只有 1 期生效；用库里的 6 层 proof 领到 6U，链上和库里已领金额一致；重复领取被拒；并发锁生效 |
+| NFT 开销 | 每 500U 一张，逐张铸造；6 万 U 单笔约 120 张，此前实测约 341 万 gas |
+| BSC 测试网 | 未广播（本机没有 `BSC_TESTNET_RPC` 和 `PRIVATE_KEY`） |
+| Slither 0.11.6 | 31 条：1 条高是误报，8 条中都不构成问题，缺事件的 2 条已修。逐条分析见安全报告第 4 节 |
 
-分支覆盖率偏低，主要是没有测到的 revert 分支（零地址、长度不匹配、参数越界）。安全报告第 6 节列出了应补的测试。
+分支覆盖率偏低，主要是各类 revert 分支没有测到。
 
 ---
 
 ## 9. 本期不做
 
-zkVM 证明、接入 UMA、NFT 批量铸造、董事 1% / 33 席 / 脱离制、正式币兑换、广播 BSC 主网。
+zk 证明、接入 UMA、NFT 批量铸造、董事 1% / 33 席 / 脱离制度、正式币兑换、雷迪森新金库与邀请关系继承、BSC 主网广播。

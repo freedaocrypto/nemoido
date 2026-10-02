@@ -17,8 +17,8 @@ flowchart TB
   User -->|claim 直推| Vault
   Vault -->|mint tokensPerUsdt| Token[NemoToken]
   Vault -->|每 500U 一枚| NFT[NemoNFT]
-  Calc[scripts/lib/team-reward.mjs] -->|submitRoot| Rewards[NemoRewards]
-  Calc -->|EIP-712 claimAdvance| Rewards
+  Calc[scripts/index-rewards.mjs] -->|实时写入| DB[(Postgres)]
+  DB -->|每24小时 submitRoot| Rewards[NemoRewards]
   User -->|claim cumulative + proof| Rewards
   Rewards -->|disburse| Vault
   Vault -->|USDT| User
@@ -27,7 +27,7 @@ flowchart TB
 | 合约 | 职责 |
 |------|------|
 | **NemoIdo** | USDT 金库：邀请、入金、直推、导入、铸 NEMOKEY / NFT。`contribute` 不再沿邀请链循环 |
-| **NemoRewards** | 累计 Merkle 是发奖依据。签名只能垫付根之上的增量，并受单账户帽和每日帽限制 |
+| **NemoRewards** | 累计 Merkle 是发奖依据。大约每 24 小时更新一次 root，用户提现时才转出 |
 | **NemoToken** | `nemokey / NEMOKEY`。按需 mint，默认禁转 |
 | **NemoNFT** | 灵魂绑定。本人业绩每 500 USDT 一枚 |
 
@@ -45,8 +45,8 @@ zkVM 不在本期。挑战不接 UMA：押金 + 时间窗 + Owner 撤销或没�
   → freezeImport → openSale
   → register / contribute
   → 直推：用户 claim()
-  → 网体：submitRoot → 挑战窗 → activateRoot → claim(proof)
-  → 可选：claimAdvance（垫付未进 root 的增量）
+  → 索引：index-rewards.mjs 把业绩和累计网体奖写入 Postgres
+  → 网体：publish-root.mjs → submitRoot → 挑战窗 → activateRoot → 用户 claim(proof)
 ```
 
 `openSale` 必须已经 `freezeImport`。`closeSale` 后不能入金，直推 `claim` 仍可用，除非 `pause`。
@@ -57,7 +57,7 @@ zkVM 不在本期。挑战不接 UMA：押金 + 时间窗 + Owner 撤销或没�
 
 `NemoNetworks.Params` 在部署时传入。`block.chainid` 不匹配则 `WrongNetwork`。
 
-- **local 31337**：MockUSDT；timelock 60 秒；垫付额度放宽；周为 30 个区块。
+- **local 31337**：MockUSDT；timelock 60 秒；周为 30 个区块。
 - **bscTestnet 97**：MockUSDT；timelock 1 小时；周为 1 小时时间戳。
 - **bscMainnet 56**：USDT `0x55d398326f99059fF775485246999027B3197955`；timelock 24 小时；周为 7 天。
 
@@ -83,7 +83,7 @@ struct Account {
 直推待领：`pendingOf = directRewards - claimed`。  
 直推准备金：`directReserve = totalDirectAccrued - totalClaimed`。  
 总准备金：`reservedRewards = directReserve + rewards.outstanding()`。  
-`withdrawTreasury` 不能抽走准备金。`disburse` 只允许奖励合约调用，且垫付不能动直推准备金，也不能动当前 root 尚未归因的 outstanding。
+`withdrawTreasury` 不能抽走准备金。`disburse` 只允许奖励合约调用，网体领取从当期 outstanding 里付，不能动直推准备金。
 
 ### 4.2 邀请
 
@@ -127,12 +127,11 @@ struct Account {
 
 配对哈希按 bytes32 数值排序。奇数节点直接上提，不复制。
 
-- `claimed`：已经转出的 USDT（Merkle 和垫付加在一起）。
+- `claimed`：已经转出的 USDT。
 - `rootAttributed`：已经用证明记入 root 的最高累计额。
-- `outstanding = committed - rootPaid`。垫付不减少 outstanding。
-- 领取只付 `cumulative - claimed`。已垫付过的部分在后续 `claim` 里只入账、不再转账。
+- `outstanding = committed - rootPaid`。
+- 领取只付 `cumulative - claimed`。用户不提现，合约不转账。
 - `submitRoot` / `activateRoot` 要求累计合计 ≥ 已经支付的网体奖，并且直推 + 该合计 ≤ 25% 帽。
-- 垫付类型：`Advance(address account,uint256 cumulative,uint256 nonce,uint256 deadline)`。域名为 `NemoRewards`，版本 `1`。
 - 挑战押金放在奖励合约里。`cancelPending` 退回，`dismissChallenge` 转给 Owner。
 
 ---
@@ -153,10 +152,12 @@ struct Account {
 | `script/SeedLocal.s.sol` | 冻导入、开售、注册 `ROOTANVL` |
 | `scripts/export-freedao.mjs` | `--network`。local / bscTestnet 写模拟地址和对照表 |
 | `scripts/import-onchain.mjs` | 导入用户、邀请、本人业绩 |
+| `scripts/index-rewards.mjs` | 实时把业绩和累计网体奖写入 Postgres |
+| `scripts/publish-root.mjs` | 组 root；`--apply` 提交，`--activate` 到期生效 |
 | `scripts/scale-anvil.mjs` | 约 300 个地址的真实交易、gas 对比、root 和领取 |
 | `scripts/scale-network.sh` | local 会部署并跑；测试网缺密钥时只打印说明，不假装已经上链 |
 
-`test/NemoScale.t.sol` 覆盖无上级、只直推、跨档、小于 100U、深浅 gas。`test/NemoRewards.t.sol` 覆盖错误 proof、timelock、挑战撤销、垫付超帽、垫付后再领不双付。`test/SimMarket.t.sol` 仍跳过，它描述的是旧三档，不作为本结构的验收。
+`test/NemoScale.t.sol` 覆盖无上级、只直推、跨档、小于 100U、深浅 gas。`test/NemoRewards.t.sol` 覆盖错误 proof、timelock、挑战撤销、重复领取。`test/SimMarket.t.sol` 仍跳过，它描述的是旧三档，不作为本结构的验收。
 
 ---
 
