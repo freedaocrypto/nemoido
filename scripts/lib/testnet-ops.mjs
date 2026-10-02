@@ -1,5 +1,16 @@
 import { getAddress } from "viem";
 
+/** Addresses only. The wallet file's private keys are never returned. */
+export function usdtMintTargets(doc) {
+  if (!Array.isArray(doc?.wallets) || doc.wallets.length === 0) {
+    throw new Error("钱包文件里没有地址");
+  }
+  return doc.wallets.map((row, i) => {
+    if (!row?.address) throw new Error(`第 ${i + 1} 个钱包缺少 address`);
+    return { index: row.index ?? i + 1, address: getAddress(row.address) };
+  });
+}
+
 export const TESTNET_CHAIN_ID = 97;
 const PRODUCTION_DB_HOST = "ep-autumn-cake";
 

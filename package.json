@@ -10,14 +10,16 @@
     "scale:anvil": "node scripts/scale-anvil.mjs",
     "e2e:postgres": "bash scripts/e2e-postgres.sh",
     "export:deferred": "node scripts/export-deferred-nfts.mjs",
-    "index:rewards": "node scripts/index-rewards.mjs",
-    "publish:root": "node scripts/publish-root.mjs",
-    "verify:root": "node scripts/verify-root.mjs",
+    "index:rewards": "node scripts/with-nemo-env.mjs index-rewards.mjs",
+    "publish:root": "node scripts/with-nemo-env.mjs publish-root.mjs",
+    "verify:root": "node scripts/with-nemo-env.mjs verify-root.mjs",
     "interest:boundary": "node scripts/lock-interest-boundary.mjs",
     "mint:test-usdt": "node scripts/mint-test-usdt.mjs",
     "import:testnet": "node scripts/import-prod-to-testnet.mjs",
     "reset:testnet-db": "node scripts/reset-testnet-db.mjs",
-    "vercel:testnet-preview": "node scripts/upload-testnet-vercel-preview.mjs"
+    "vercel:testnet-preview": "node scripts/upload-testnet-vercel-preview.mjs",
+    "deploy:testnet": "node scripts/deploy-testnet.mjs",
+    "publisher:testnet": "node scripts/set-testnet-publisher.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",
