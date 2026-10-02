@@ -86,3 +86,31 @@ export function planChunk({ lastBlock, startBlock, safeHead, chunkBlocks }) {
   const end = from + size - 1n > safeHead ? safeHead : from + size - 1n;
   return { from, end };
 }
+
+/** Whole seconds, for progress lines. */
+export function formatDuration(ms) {
+  const total = Math.max(0, Math.round(Number(ms) / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours}小时${minutes}分${seconds}秒`;
+  if (minutes > 0) return `${minutes}分${seconds}秒`;
+  return `${seconds}秒`;
+}
+
+/**
+ * One progress line after a chunk is saved.
+ * ETA uses blocks finished in this run divided by wall time, so it includes RPC and database writes.
+ */
+export function formatIndexProgress({ origin, safeHead, doneBlock, chunkLogs, totalLogs, startedAt, now }) {
+  const span = safeHead >= origin ? safeHead - origin + 1n : 0n;
+  const rawDone = doneBlock >= origin ? doneBlock - origin + 1n : 0n;
+  const done = rawDone > span ? span : rawDone;
+  const percent = span === 0n ? 100 : Number((done * 1000n) / span) / 10;
+  const elapsed = Math.max(0, now - startedAt);
+  const left = safeHead > doneBlock ? safeHead - doneBlock : 0n;
+  let eta = "计算中";
+  if (left === 0n) eta = "0秒";
+  else if (elapsed > 0 && done > 0n) eta = formatDuration((elapsed * Number(left)) / Number(done));
+  return `进度 ${doneBlock}/${safeHead} ${percent.toFixed(1)}%  本段 ${chunkLogs} 条  累计 ${totalLogs} 条  已用 ${formatDuration(elapsed)}  预计剩余 ${eta}`;
+}

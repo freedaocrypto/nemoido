@@ -63,6 +63,8 @@ contract Deploy is Script {
 
         NemoToken nemo = new NemoToken(deployer);
         NemoNFT nft = new NemoNFT(deployer, "NemoNFT", "NEMONFT");
+        string memory nftImage = vm.envOr("NFT_IMAGE_URI", string(""));
+        if (bytes(nftImage).length != 0) nft.setImageURI(nftImage);
         NemoIdo ido = new NemoIdo(usdtAddr, address(nemo), address(nft), owner, params);
         nemo.setMinter(address(ido));
         nft.setMinter(address(ido));
@@ -83,6 +85,7 @@ contract Deploy is Script {
         console2.log("USDT", usdtAddr);
         console2.log("NEMOKEY", address(nemo));
         console2.log("NemoNFT", address(nft));
+        console2.log("NemoNFT image", nft.imageURI());
         console2.log("NemoIdo", address(ido));
         console2.log("NemoRewards", address(rewards));
         console2.log("NemoNftInterest", address(interest));

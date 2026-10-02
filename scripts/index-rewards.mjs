@@ -11,7 +11,7 @@
  *   ... node scripts/index-rewards.mjs --follow
  */
 import { createPublicClient, http, parseAbiItem, getAddress } from "viem";
-import { accountRows, applyLog, planChunk, sortLogs } from "./lib/reward-index.mjs";
+import { accountRows, applyLog, formatIndexProgress, planChunk, sortLogs } from "./lib/reward-index.mjs";
 import {
   ensureSchema,
   loadAccounts,
@@ -96,10 +96,16 @@ async function indexOnce(client, publicClient) {
 
     const stored = await loadAccounts(client, chainId, ido);
     const state = stateFromRows(stored);
+    const origin = planChunk({ lastBlock: last, startBlock, safeHead, chunkBlocks }).from;
+    const startedAt = Date.now();
+    console.log(
+      `chain ${chainId} 从区块 ${origin} 扫到 ${safeHead}，共 ${safeHead - origin + 1n} 个区块，每段 ${chunkBlocks}`,
+    );
     let count = 0;
     for (;;) {
       const range = planChunk({ lastBlock: last, startBlock, safeHead, chunkBlocks });
       if (!range) break;
+      console.log(`扫描 ${range.from}-${range.end}`);
       const logs = sortLogs([
         ...(await pullLogs(publicClient, ido, IDO_EVENTS, range.from, range.end)),
         ...(rewards ? await pullLogs(publicClient, rewards, REWARD_EVENTS, range.from, range.end) : []),
@@ -114,6 +120,17 @@ async function indexOnce(client, publicClient) {
         lastBlock: Number(last),
         rows: accountRows(state),
       });
+      console.log(
+        formatIndexProgress({
+          origin,
+          safeHead,
+          doneBlock: last,
+          chunkLogs: logs.length,
+          totalLogs: count,
+          startedAt,
+          now: Date.now(),
+        }),
+      );
     }
     console.log(`chain ${chainId} indexed ${count} logs through block ${last}`);
     return { indexed: count, lastBlock: Number(last) };

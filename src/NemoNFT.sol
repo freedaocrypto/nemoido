@@ -4,21 +4,29 @@ pragma solidity ^0.8.28;
 import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {Ownable2Step} from "../lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 import {ERC721} from "../lib/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
+import {IERC165} from "../lib/openzeppelin-contracts/contracts/interfaces/IERC165.sol";
+import {IERC4906} from "../lib/openzeppelin-contracts/contracts/interfaces/IERC4906.sol";
+import {Base64} from "../lib/openzeppelin-contracts/contracts/utils/Base64.sol";
+import {Strings} from "../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 
 /// @title NemoNFT
 /// @notice Soulbound pass: one token per 500 USDT of self volume, minted by the vault.
 ///         Transfers are permanently disabled. Weekly yield is paid by NemoNftInterest.
-contract NemoNFT is ERC721, Ownable2Step {
+///         Every token shares one image; the owner can replace its URL at any time.
+contract NemoNFT is ERC721, Ownable2Step, IERC4906 {
     address public minter;
     uint256 public nextId;
+    string public imageURI;
 
     event MinterUpdated(address indexed minter);
+    event ImageURIUpdated(string imageURI);
 
     error ZeroAddress();
     error NotAuthorized();
     error TransfersLocked();
     error ZeroCount();
     error MinterAlreadySet();
+    error InvalidImageURI();
 
     constructor(
         address initialOwner,
@@ -38,6 +46,16 @@ contract NemoNFT is ERC721, Ownable2Step {
         emit MinterUpdated(minter_);
     }
 
+    /// @notice Replace the shared image. Wallets and explorers re-read metadata via ERC-4906.
+    function setImageURI(
+        string calldata imageURI_
+    ) external onlyOwner {
+        _checkImageURI(bytes(imageURI_));
+        imageURI = imageURI_;
+        emit ImageURIUpdated(imageURI_);
+        if (nextId != 0) emit BatchMetadataUpdate(1, nextId);
+    }
+
     function mint(
         address to,
         uint256 count
@@ -54,6 +72,29 @@ contract NemoNFT is ERC721, Ownable2Step {
         }
     }
 
+    /// @notice On-chain JSON. Only the image points off-chain.
+    function tokenURI(
+        uint256 tokenId
+    ) public view override returns (string memory) {
+        _requireOwned(tokenId);
+        string memory id = Strings.toString(tokenId);
+        bytes memory json = abi.encodePacked(
+            '{"name":"FREEDAO RWA Pass #',
+            id,
+            '","description":"FREEDAO RWA Pass. Non-transferable. Face value 500 USDT.","image":"',
+            imageURI,
+            '","attributes":[{"trait_type":"Face value","value":"500 USDT"},',
+            '{"trait_type":"Transferable","value":"No"}]}'
+        );
+        return string.concat("data:application/json;base64,", Base64.encode(json));
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override(ERC721, IERC165) returns (bool) {
+        return interfaceId == bytes4(0x49064906) || super.supportsInterface(interfaceId);
+    }
+
     function _update(
         address to,
         uint256 tokenId,
@@ -62,5 +103,16 @@ contract NemoNFT is ERC721, Ownable2Step {
         address from = _ownerOf(tokenId);
         if (from != address(0) && to != address(0)) revert TransfersLocked();
         return super._update(to, tokenId, auth);
+    }
+
+    /// @dev The URL is spliced into JSON unescaped, so quotes, backslashes and control bytes are rejected.
+    function _checkImageURI(
+        bytes memory uri
+    ) private pure {
+        if (uri.length == 0) revert InvalidImageURI();
+        for (uint256 i = 0; i < uri.length; i++) {
+            bytes1 c = uri[i];
+            if (c < 0x20 || c == 0x22 || c == 0x5c || c == 0x7f) revert InvalidImageURI();
+        }
     }
 }
