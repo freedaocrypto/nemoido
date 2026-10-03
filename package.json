@@ -19,7 +19,8 @@
     "reset:testnet-db": "node scripts/reset-testnet-db.mjs",
     "vercel:testnet-preview": "node scripts/upload-testnet-vercel-preview.mjs",
     "deploy:testnet": "node scripts/deploy-testnet.mjs",
-    "publisher:testnet": "node scripts/set-testnet-publisher.mjs"
+    "publisher:testnet": "node scripts/set-testnet-publisher.mjs",
+    "nft:image": "node scripts/set-nft-image.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",
