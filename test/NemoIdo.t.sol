@@ -21,6 +21,7 @@ contract NemoIdoTest is NemoIdoBase {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
         _contribute(bob, 1000 * UNIT);
 
         assertEq(_self(bob), 1000 * UNIT);
@@ -33,16 +34,47 @@ contract NemoIdoTest is NemoIdoBase {
         assertEq(ido.pendingOf(alice), 0);
     }
 
-    function test_directPaysEvenIfReferrerHasNoSelfVolume() public {
+    function test_directRequiresReferrerSelfAtLeast100() public {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
         _contribute(bob, 1000 * UNIT);
         assertEq(_self(alice), 0);
-        assertEq(_direct(alice), 100 * UNIT);
+        assertEq(_direct(alice), 0);
     }
 
-    function test_registerAndContribute_below100_noDirect() public {
+    function test_qualifiedReferrerEarnsOnFifty() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
+        _contribute(bob, 50 * UNIT);
+        assertEq(_direct(alice), 5 * UNIT);
+    }
+
+    function test_referrerAt50EarnsNothingOnDownline100() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 50 * UNIT);
+        _contribute(bob, 100 * UNIT);
+        assertEq(_direct(alice), 0);
+    }
+
+    function test_crossing100DoesNotBackfillDirect() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 50 * UNIT);
+        _contribute(bob, 100 * UNIT);
+        _contribute(alice, 50 * UNIT);
+        assertEq(_self(alice), 100 * UNIT);
+        assertEq(_direct(alice), 0);
+        _contribute(bob, 80 * UNIT);
+        assertEq(_direct(alice), 8 * UNIT);
+    }
+
+    function test_qualifiedReferrerEarnsOnFiftyAfterOwn1000() public {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
@@ -50,7 +82,7 @@ contract NemoIdoTest is NemoIdoBase {
         _contribute(bob, 50 * UNIT);
 
         assertEq(_self(bob), 50 * UNIT);
-        assertEq(_direct(alice), 0);
+        assertEq(_direct(alice), 5 * UNIT);
         assertEq(uint256(ido.roleOf(bob)), uint256(NemoIdo.Role.Explorer));
         assertEq(uint256(ido.roleOf(alice)), uint256(NemoIdo.Role.Partner));
     }
@@ -60,6 +92,7 @@ contract NemoIdoTest is NemoIdoBase {
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
         _register(carol, "CAROL001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
         _contribute(bob, 1000 * UNIT);
         assertEq(_direct(alice), 100 * UNIT);
 
@@ -75,6 +108,7 @@ contract NemoIdoTest is NemoIdoBase {
         _register(bob, "BOB00001", "ALICE001");
         _register(carol, "CAROL001", "BOB00001");
         _register(dave, "DAVE0001", "CAROL001");
+        _contribute(carol, 100 * UNIT);
         _contribute(dave, 1000 * UNIT);
         assertEq(_self(dave), 1000 * UNIT);
         assertEq(_direct(carol), 100 * UNIT);
@@ -163,6 +197,7 @@ contract NemoIdoTest is NemoIdoBase {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
         _contribute(bob, 1000 * UNIT);
 
         uint256 pending = ido.pendingOf(alice);
@@ -186,12 +221,13 @@ contract NemoIdoTest is NemoIdoBase {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
         _contribute(bob, 1000 * UNIT);
 
         uint256 reserved = ido.reservedRewards();
         uint256 withdrawable = ido.treasuryWithdrawable();
         assertEq(reserved, 100 * UNIT);
-        assertEq(withdrawable, 1000 * UNIT - 100 * UNIT);
+        assertEq(withdrawable, 1100 * UNIT - 100 * UNIT);
         vm.prank(owner);
         vm.expectRevert(NemoIdo.InsufficientTreasury.selector);
         ido.withdrawTreasury(owner, withdrawable + 1);
@@ -250,7 +286,7 @@ contract NemoIdoTest is NemoIdoBase {
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
         _contribute(bob, 1000 * UNIT);
-        assertEq(_direct(alice), 100 * UNIT);
+        assertEq(_direct(alice), 0);
         assertEq(_self(bob), 1000 * UNIT);
         assertEq(nemo.balanceOf(bob), 100_000 * UNIT);
         assertEq(nemo.balanceOf(alice), 0);

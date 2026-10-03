@@ -129,6 +129,75 @@ test("golden overlay pays nearest max tier", () => {
   assert.equal(teamOf(s, "alice") - aliceBefore, 0n);
 });
 
+test("qualified referrer earns direct and team on a 50 deposit", () => {
+  const s = createState();
+  bind(s, "alice", null);
+  bind(s, "bob", "alice");
+  contribute(s, "alice", u(100));
+  const atFloor = contribute(s, "bob", u(50));
+  assert.equal(atFloor.directPaid, u(5));
+  assert.equal(directOf(s, "alice"), u(5));
+  assert.equal(teamOf(s, "alice"), 0n);
+  assert.equal(s.team.get("alice"), u(50));
+
+  contribute(s, "alice", u(400));
+  const atTier = contribute(s, "bob", u(50));
+  assert.equal(atTier.directPaid, u(5));
+  assert.equal(teamOf(s, "alice"), (u(50) * 300n) / 10_000n);
+});
+
+test("unqualified referrer earns nothing and the gap moves up", () => {
+  const s = createState();
+  bind(s, "alice", null);
+  bind(s, "bob", "alice");
+  bind(s, "carol", "bob");
+  contribute(s, "alice", u(500));
+  contribute(s, "bob", u(50));
+  const tx = contribute(s, "carol", u(100));
+  assert.equal(tx.directTo, "bob");
+  assert.equal(tx.directPaid, 0n);
+  assert.equal(directOf(s, "bob"), 0n);
+  assert.equal(directOf(s, "alice"), u(5));
+  assert.equal(teamOf(s, "bob"), 0n);
+  assert.equal(teamOf(s, "alice"), (u(150) * 300n) / 10_000n);
+  assert.equal(s.team.get("bob"), u(100));
+});
+
+test("crossing 100 does not backfill earlier downline deposits", () => {
+  const s = createState();
+  bind(s, "alice", null);
+  bind(s, "bob", "alice");
+  contribute(s, "alice", u(50));
+  contribute(s, "bob", u(1_000));
+  assert.equal(directOf(s, "alice"), 0n);
+  assert.equal(teamOf(s, "alice"), 0n);
+  contribute(s, "alice", u(50));
+  assert.equal(directOf(s, "alice"), 0n);
+  assert.equal(teamOf(s, "alice"), 0n);
+  contribute(s, "bob", u(100));
+  assert.equal(directOf(s, "alice"), u(10));
+  assert.equal(teamOf(s, "alice"), (u(100) * 300n) / 10_000n);
+  assert.equal(s.team.get("alice"), u(1_100));
+});
+
+test("zero self with a huge downline takes no differential and no overlay", () => {
+  const s = createState();
+  bind(s, "alice", null);
+  bind(s, "bob", "alice");
+  bind(s, "carol", "bob");
+  bind(s, "dave", "bob");
+  contribute(s, "alice", u(60_000));
+  contribute(s, "carol", u(60_000));
+  assert.equal(teamOf(s, "bob"), 0n);
+  assert.equal(s.team.get("bob"), u(60_000));
+  const before = teamOf(s, "alice");
+  const tx = contribute(s, "dave", u(1_000));
+  assert.equal(tx.directPaid, 0n);
+  assert.equal(teamOf(s, "bob"), 0n);
+  assert.equal(teamOf(s, "alice") - before, u(100));
+  assert.equal(tx.overlay, 0n);
+});
+
 test("single max tier has no overlay", () => {
   const s = createState();
   bind(s, "alice", null);

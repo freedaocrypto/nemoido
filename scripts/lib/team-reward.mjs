@@ -5,7 +5,7 @@ export const BPS = 10_000n;
 export const OVERLAY_BPS = 1_000n;
 export const TOP_BPS = 1_000n;
 export const DIRECT_BPS = 1_000n;
-export const MIN_REFERRAL = 100n * UNIT;
+export const MIN_SELF = 100n * UNIT;
 
 export const TIERS = [
   [500n * UNIT, 300n],
@@ -52,12 +52,12 @@ export function seedSelf(state, account, amount) {
  */
 export function contribute(state, account, amount, opts = {}) {
   const directBps = opts.directBps ?? DIRECT_BPS;
-  const minReferral = opts.minReferral ?? MIN_REFERRAL;
+  const minSelf = opts.minSelf ?? MIN_SELF;
   state.self.set(account, get(state.self, account) + amount);
 
   const ref = state.referrer.get(account) || null;
   let directPaid = 0n;
-  if (ref && amount >= minReferral) {
+  if (ref && get(state.self, ref) >= minSelf) {
     directPaid = (amount * directBps) / BPS;
     if (directPaid > 0n) state.direct.set(ref, get(state.direct, ref) + directPaid);
   }
@@ -70,8 +70,9 @@ export function contribute(state, account, amount, opts = {}) {
   const deltas = [];
 
   while (cursor) {
-    const qual = get(state.self, cursor) + get(state.team, cursor);
-    const rate = bpsForQual(qual);
+    const self = get(state.self, cursor);
+    const qual = self + get(state.team, cursor);
+    const rate = self >= minSelf ? bpsForQual(qual) : 0n;
     let reward = 0n;
     if (rate > prev) {
       reward = (amount * (rate - prev)) / BPS;

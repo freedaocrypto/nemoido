@@ -82,12 +82,31 @@ contract NemoNftTest is NemoIdoBase {
         assertTrue(nft.supportsInterface(0x80ac58cd));
     }
 
-    function test_oneDeposit500MintsOne() public {
+    function test_oneDeposit500MintsNone() public {
         _openSale();
         _register(alice, "ALICE001", "");
         _contribute(alice, 500 * UNIT);
-        assertEq(nft.balanceOf(alice), 1);
-        assertEq(ido.nftMinted(alice), 1);
+        assertEq(nft.balanceOf(alice), 0);
+        assertEq(ido.nftMinted(alice), 0);
+        assertEq(ido.nftDeferred(alice), 0);
+        assertEq(ido.nftRemainder(alice), 0);
+    }
+
+    function test_oneDeposit1000MintsTwo() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1000 * UNIT);
+        assertEq(nft.balanceOf(alice), 2);
+        assertEq(ido.nftMinted(alice), 2);
+        assertEq(ido.nftRemainder(alice), 0);
+    }
+
+    function test_oneDeposit1500MintsThree() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1500 * UNIT);
+        assertEq(nft.balanceOf(alice), 3);
+        assertEq(ido.nftMinted(alice), 3);
         assertEq(ido.nftRemainder(alice), 0);
     }
 
@@ -106,7 +125,7 @@ contract NemoNftTest is NemoIdoBase {
         assertEq(nft.balanceOf(alice), 0);
         assertEq(ido.nftRemainder(alice), 250 * UNIT);
         _contribute(alice, 250 * UNIT);
-        assertEq(nft.balanceOf(alice), 1);
+        assertEq(nft.balanceOf(alice), 0);
         assertEq(ido.nftRemainder(alice), 0);
     }
 
@@ -116,7 +135,7 @@ contract NemoNftTest is NemoIdoBase {
         _contribute(alice, 400 * UNIT);
         assertEq(nft.balanceOf(alice), 0);
         _contribute(alice, 500 * UNIT);
-        assertEq(nft.balanceOf(alice), 1);
+        assertEq(nft.balanceOf(alice), 0);
         assertEq(ido.nftRemainder(alice), 400 * UNIT);
         _contribute(alice, 100 * UNIT);
         assertEq(nft.balanceOf(alice), 2);
@@ -126,7 +145,7 @@ contract NemoNftTest is NemoIdoBase {
     function test_soulboundCannotTransfer() public {
         _openSale();
         _register(alice, "ALICE001", "");
-        _contribute(alice, 500 * UNIT);
+        _contribute(alice, 1000 * UNIT);
         uint256 id = 1;
         assertEq(nft.ownerOf(id), alice);
         vm.prank(alice);
@@ -149,6 +168,7 @@ contract NemoNftTest is NemoIdoBase {
         _openSale();
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
         _contribute(bob, 1000 * UNIT);
         assertEq(_direct(alice), 100 * UNIT);
         assertEq(nemo.balanceOf(bob), 100_000 * UNIT);
@@ -183,5 +203,31 @@ contract NemoNftTest is NemoIdoBase {
         _contribute(alice, 400 * UNIT);
         assertEq(nft.balanceOf(alice), 1);
         assertEq(ido.nftMinted(alice), 3);
+    }
+
+    function test_import500OccupiesNoNft() public {
+        vm.startPrank(owner);
+        ido.importUsers(_one(alice), _oneCode("ALICE001"));
+        ido.importVolumes(_one(alice), _oneAmount(500 * UNIT));
+        vm.stopPrank();
+        assertEq(ido.nftMinted(alice), 0);
+        assertEq(ido.importedNfts(alice), 0);
+        assertEq(ido.nftsAllocated(), 0);
+        assertEq(nft.balanceOf(alice), 0);
+    }
+
+    function _one(address account) internal pure returns (address[] memory accounts) {
+        accounts = new address[](1);
+        accounts[0] = account;
+    }
+
+    function _oneCode(string memory code) internal pure returns (bytes32[] memory codes) {
+        codes = new bytes32[](1);
+        codes[0] = _code(code);
+    }
+
+    function _oneAmount(uint256 amount) internal pure returns (uint256[] memory amounts) {
+        amounts = new uint256[](1);
+        amounts[0] = amount;
     }
 }

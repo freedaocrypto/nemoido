@@ -149,7 +149,7 @@ F 的新下级是索引 11 `0xe464819Ce6A4fb55e09F1BE0F43054d64F3Bb381`，邀请
 - [x] C 入金 99 USDT：成功；NEMOKEY +9,900；NFT 0；`roleOf = Explorer`；A 的直推**不增加**（不满 100）
 - [x] B 入金 100 USDT：成功；NEMOKEY +10,000；NFT 0；`nftRemainder = 100 USDT`；`roleOf = Ambassador`；A 的 `pendingOf` 增加 **10 USDT**
 - [x] A 入金 1,000 USDT：成功；NEMOKEY +100,000；NFT **2** 张；`roleOf = Partner`；A 没有上级，直推不增加
-- [x] A 此时自己业绩已 ≥ 100，但直推只看下级这笔金额，不看上级自己有没有入金。用一个新下级给「零业绩上级」入金 100，该上级仍得到 10 USDT 直推
+- [ ] 直推看推荐人本人累计是否 ≥ 100 USDT。零业绩上级的下级入金 100，该上级直推仍是 0。本人正好 100 的上级，下级入金 50，直推增加 5 USDT
 - [x] 单笔 1,200 USDT：NFT +2，余数 200 USDT，NEMOKEY +120,000
 - [x] 单笔 499 USDT：NFT 不变，余数 499
 - [x] 单笔 500 USDT：NFT +1，余数 0
@@ -331,6 +331,8 @@ A 的 1,000 USDT 是 2026-10-01 入的，到本轮时已经过了很多周。当
 
 合约不在入金时发网体奖。索引器写入 Postgres，publisher 发 root 之后用户才能领。
 
+拿奖人本人累计满 100 USDT 才有直推和网体奖。不到 100 的不占档位，直推也不顺延。凑满 100 只对之后的新入金计奖。下级入了多少只决定奖金金额。
+
 档位看的是**这笔入金加进伞下之前**的「本人 + 伞下」：
 
 | 之前的资格 | 费率 |
@@ -356,12 +358,12 @@ A 的 1,000 USDT 是 2026-10-01 入的，到本轮时已经过了很多周。当
 
 1. 上级 S 无推荐人，先入金 **1,000** USDT（资格达到 3% 档）
 2. 下级 T 绑定 S，入金 **1,000** USDT
-3. 下级 U 绑定 S，入金 **99** USDT（无直推，仍有网体）
+3. 下级 U 绑定 S，入金 **99** USDT（S 已满 100，直推和网体都按 99 算）
 
 手算：
 
 - T 的 1,000：S 直推 **100**（链上）；网体 **30**（3%）
-- U 的 99：S 直推 **0**；网体 **2.97**
+- U 的 99：S 直推 **9.9**；网体 **2.97**
 - S 的网体累计 **32.97 USDT**；T、U 自己的网体是 0
 
 本机 `.env` 的 `DATABASE_URL` 是空的，发布还会从金库付出 USDT。整节见 [bsc-testnet-manual.md](bsc-testnet-manual.md)。
@@ -369,7 +371,7 @@ A 的 1,000 USDT 是 2026-10-01 入的，到本轮时已经过了很多周。当
 - [ ] `npm run index:rewards` 连的是测试网 RPC、chainId 97、上面的金库地址，而不是本机 8545。见 [bsc-testnet-manual.md](bsc-testnet-manual.md)
 - [ ] 索引追上最新区块后，库里 S/T/U 的上级、本人业绩与链上一致。见 [bsc-testnet-manual.md](bsc-testnet-manual.md)
 - [ ] S 的累计网体奖 = 32.97 USDT（允许与库内 wei 完全一致，不允许四舍五入）。见 [bsc-testnet-manual.md](bsc-testnet-manual.md)
-- [ ] T 入金时 S 自己还没入金的话，重做一遍「S 业绩为 0」：T 入金 1,000 只产生直推 100，网体为 0。见 [bsc-testnet-manual.md](bsc-testnet-manual.md)
+- [ ] 另做一遍「S 本人累计不到 100」：T 入金 1,000，S 的直推是 0，网体也是 0。S 之后再凑满 100，这笔 1,000 不补。见 [bsc-testnet-manual.md](bsc-testnet-manual.md)
 - [ ] 页面或库里在 root 发布前就能看到预计金额，但此时用户 `claim` 失败。见 [bsc-testnet-manual.md](bsc-testnet-manual.md)
 
 ### 7.3 发布、核对、领取

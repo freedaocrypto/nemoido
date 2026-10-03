@@ -197,7 +197,7 @@ const a21 = actors[20];
 const a2 = actors[1];
 const a59 = actors[58];
 const a3 = actors[2];
-await pay(a21.account.address, a21.wallet, 500n * UNIT);
+await pay(a21.account.address, a21.wallet, 1000n * UNIT);
 const shallowGas = await pay(a2.account.address, a2.wallet, 1000n * UNIT);
 const deepGas = await pay(a59.account.address, a59.wallet, 1000n * UNIT);
 const gap = shallowGas > deepGas ? shallowGas - deepGas : deepGas - shallowGas;
@@ -214,8 +214,8 @@ const rootAfter = await publicClient.readContract({
   functionName: "getAccount",
   args: [owner.address],
 });
-if (rootAfter.directRewards !== 100n * UNIT) {
-  console.error(`root direct ${rootAfter.directRewards} != 100 USDT`);
+if (rootAfter.directRewards !== 0n) {
+  console.error(`root direct ${rootAfter.directRewards} != 0 before root qualifies`);
   process.exit(1);
 }
 
@@ -250,7 +250,7 @@ const parent58 = await publicClient.readContract({
 });
 const total = await publicClient.readContract({ address: ido, abi: idoAbi, functionName: "totalContributed" });
 if (deepAccount.selfVolume !== 1000n * UNIT) throw new Error("actor 59 self volume");
-if (parent58.directRewards !== 100n * UNIT) throw new Error("actor 58 direct");
+if (parent58.directRewards !== 0n) throw new Error("actor 58 direct");
 if (total <= 300n * 100n * UNIT) throw new Error("total contributed too small");
 
 const entries = [];

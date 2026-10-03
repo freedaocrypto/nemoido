@@ -37,9 +37,15 @@ if (apply) {
 const run = JSON.parse(readFileSync(artifact,'utf8'));
 if (Number(run.chain) !== 97) throw new Error('部署记录不是97');
 if (!run.receipts?.length || run.receipts.some(r=>BigInt(r.status)!==1n)) throw new Error('部署中有缺失或失败回执，拒绝同步');
-const names = {MockUSDT:'USDT',NemoToken:'NEMOKEY',NemoNFT:'NFT',NemoIdo:'IDO',NemoRewards:'REWARDS',NemoNftInterest:'INTEREST'};
+const names = {NemoToken:'NEMOKEY',NemoNFT:'NFT',NemoIdo:'IDO',NemoRewards:'REWARDS',NemoNftInterest:'INTEREST'};
 const updates = {};
 const blocks = [];
+const usdtCreates = run.transactions.filter(t=>t.contractName==='MockUSDT' && t.transactionType==='CREATE');
+if (usdtCreates.length !== 0) throw new Error('本次部署不应新铸MockUSDT');
+if (!config.BSC_TESTNET_USDT) throw new Error('测试网必须沿用.env里的BSC_TESTNET_USDT');
+const usdt = getAddress(config.BSC_TESTNET_USDT);
+if (!(await client.getCode({address:usdt}))) throw new Error('现有MockUSDT没有字节码');
+updates.BSC_TESTNET_USDT = usdt;
 for (const [name,key] of Object.entries(names)) {
   const txs = run.transactions.filter(t=>t.contractName===name && t.transactionType==='CREATE');
   if (txs.length !== 1) throw new Error(`${name}部署记录必须恰好一条`);
@@ -65,4 +71,4 @@ if (!config.PUBLISHER_PRIVATE_KEY) updates.PUBLISHER_PRIVATE_KEY = generatePriva
 updates.PUBLISHER_ADDRESS = privateKeyToAccount(config.PUBLISHER_PRIVATE_KEY || updates.PUBLISHER_PRIVATE_KEY).address;
 saveTestnetEnv(updates);
 console.log(JSON.stringify({...updates, PUBLISHER_PRIVATE_KEY: updates.PUBLISHER_PRIVATE_KEY?'[已安全写入，不显示]':undefined},null,2).replace(config.BSC_TESTNET_RPC,'[BSC_TESTNET_RPC]'));
-console.log('六个地址、最早部署区块及索引配置已同步。下一步按部署说明预览/重置测试库、导入，再设置publisher。');
+console.log('沿用现有MockUSDT。五个新合约地址、最早部署区块及索引配置已同步。下一步按部署说明预览/重置测试库、导入，再设置publisher。');

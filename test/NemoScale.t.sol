@@ -29,7 +29,7 @@ contract NemoScaleTest is NemoIdoBase {
 
         // Prime global counters and the NFT minter so the two measured deposits
         // differ only by the account they touch, not by first-time initialization.
-        _pay(_actor(21), 500 * UNIT);
+        _pay(_actor(21), 1000 * UNIT);
 
         uint256 shallowGas = _pay(_actor(2), 1000 * UNIT);
         uint256 deepGas = _pay(_actor(59), 1000 * UNIT);
@@ -37,7 +37,7 @@ contract NemoScaleTest is NemoIdoBase {
         assertLt(gap, 80_000, "deep and shallow contribute gas diverged");
 
         _pay(_actor(3), 50 * UNIT);
-        assertEq(_direct(root), 100 * UNIT);
+        assertEq(_direct(root), 0);
 
         _pay(_actor(4), 500 * UNIT);
         _pay(_actor(5), 2_000 * UNIT);
@@ -53,8 +53,8 @@ contract NemoScaleTest is NemoIdoBase {
 
         assertEq(ido.getAccount(_actor(59)).selfVolume, 1000 * UNIT);
         assertGt(ido.totalContributed(), 300 * 100 * UNIT);
-        assertEq(_direct(_actor(58)), 100 * UNIT);
-        assertEq(ido.getAccount(_actor(21)).selfVolume, 500 * UNIT);
+        assertEq(_direct(_actor(58)), 0);
+        assertEq(ido.getAccount(_actor(21)).selfVolume, 1000 * UNIT);
     }
 
     function _pay(address who, uint256 amount) internal returns (uint256 used) {
