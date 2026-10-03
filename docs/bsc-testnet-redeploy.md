@@ -1,6 +1,6 @@
 # BSC 测试网从头再部署
 
-旧的五个合约地址作废。这次会新铸一份 MockUSDT，金库、NEMOKEY、NFT、奖励、周息全是新地址。部署账户是 `.env` 里的 `TEST_PRIVATE_KEY`，它会成为五个合约的 owner。
+旧的金库、NEMOKEY、NFT、奖励、周息地址作废。MockUSDT 沿用已经在测试网上的 `0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57`，不再新铸。部署账户是 `.env` 里的 `TEST_PRIVATE_KEY`，它会成为五个新合约的 owner。
 
 不要跑 `scripts/scale-network.sh`。它部署后会自动打几百笔入金。
 
@@ -35,10 +35,10 @@ npm run deploy:testnet
 npm run deploy:testnet -- --apply
 ```
 
-脚本执行 `Deploy.s.sol:Deploy`，固定 `NETWORK=bscTestnet` 和 NFT 图片地址，部署六个新合约。仅在部署成功、本次 broadcast 产物有效、六笔创建回执链上成功且金库关联和五个 Owner 均正确后写回 `.env`：
+脚本执行 `Deploy.s.sol:Deploy`，固定 `NETWORK=bscTestnet` 和 NFT 图片地址，部署五个新合约，USDT 使用 `.env` 里已有的 `BSC_TESTNET_USDT`。广播记录里如果出现新的 MockUSDT，脚本拒绝写回。仅在部署成功、本次 broadcast 产物有效、五笔创建回执链上成功、金库 `usdt()` 等于现有 MockUSDT、其余关联和五个 Owner 均正确后写回 `.env`：
 
-- 六个 `BSC_TESTNET_*` 地址
-- `INDEX_START_BLOCK` 和 `START_BLOCK`：六笔创建交易中最早区块，保证不漏初始事件
+- 五个新的 `BSC_TESTNET_*` 地址。`BSC_TESTNET_USDT` 保持不动
+- `INDEX_START_BLOCK` 和 `START_BLOCK`：五笔创建交易中最早区块，保证不漏初始事件
 - `IDO_ADDRESS`、`REWARDS_ADDRESS`：与同批测试网地址一致
 - `RPC_URL=BSC_TESTNET_RPC`、`CHAIN_ID=97`、`NETWORK=bscTestnet`、`NFT_IMAGE_URI`
 - `PUBLISHER_ADDRESS`：自动从 publisher 私钥推导
@@ -120,9 +120,9 @@ npm run import:testnet -- --open
 
 核对 `importFrozen() == true`，`saleOpen() == true`。
 
-## 9. 给测试钱包铸新的 MockUSDT
+## 9. 给测试钱包补铸现有 MockUSDT
 
-新 MockUSDT 和旧测试币不是同一份。脚本读取 `/Users/jack/Documents/Sensitive/nemo-bsc-testnet-wallets.json` 里的地址，不使用里面的私钥。每个地址铸 100,000 USDT。Gas 由 `.env` 的 `TEST_PRIVATE_KEY` 支付，收款地址自己不用出 gas。
+币仍是 `0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57`。钱包里已经有的余额留在这份合约上。脚本读取 `/Users/jack/Documents/Sensitive/nemo-bsc-testnet-wallets.json` 里的地址，不使用里面的私钥。每个地址再铸 100,000 USDT。Gas 由 `.env` 的 `TEST_PRIVATE_KEY` 支付，收款地址自己不用出 gas。部署账户必须仍是这份 MockUSDT 的 owner。
 
 先打印地址：
 

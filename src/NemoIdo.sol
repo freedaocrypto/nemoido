@@ -24,6 +24,10 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     uint256 public constant REWARD_CAP_BPS = 2500;
     uint256 public constant USDT_UNIT_100 = 100e18;
     uint256 public constant NFT_UNIT = 500e18;
+    /// @notice Own volume required before an account can earn direct or be treated as qualified upstream.
+    uint256 public constant MIN_REWARD_SELF = 100e18;
+    /// @notice Own volume required before any NFT is owed. Count is still `volume / NFT_UNIT`.
+    uint256 public constant NFT_MIN_SELF = 1000e18;
 
     enum Role {
         None,
@@ -254,7 +258,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     function nftDeferred(
         address account
     ) public view returns (uint256) {
-        uint256 owed = accounts[account].selfVolume / NFT_UNIT;
+        uint256 owed = _nftsOwed(accounts[account].selfVolume);
         uint256 minted = nftMinted[account];
         return owed > minted ? owed - minted : 0;
     }
@@ -402,6 +406,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         emit DirectReferralBpsUpdated(bps);
     }
 
+    /// @notice Kept so existing admin calls still succeed. Direct rewards ignore this value.
     function setMinReferralAmount(
         uint256 amount
     ) external onlyOwner {
@@ -567,7 +572,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
             address account = wallets[i];
             if (!accounts[account].registered) revert NotRegistered();
             accounts[account].selfVolume = selfVolumes[i];
-            uint256 nfts = selfVolumes[i] / NFT_UNIT;
+            uint256 nfts = _nftsOwed(selfVolumes[i]);
             uint256 prev = importedNfts[account];
             if (grantedNfts[account] > nfts) revert GrantExceedsImport();
             nftsAllocated = nftsAllocated - prev + nfts;
@@ -654,9 +659,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         accounts[account].selfVolume += amount;
         totalContributed += amount;
 
-        if (amount >= minReferralAmount) {
-            _settleDirect(account, amount);
-        }
+        _settleDirect(account, amount);
 
         uint256 nemoAmount = tokensFor(amount);
         if (nemoAmount > 0) {
@@ -680,7 +683,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     function _syncNfts(
         address account
     ) internal {
-        uint256 owed = accounts[account].selfVolume / NFT_UNIT;
+        uint256 owed = _nftsOwed(accounts[account].selfVolume);
         uint256 minted = nftMinted[account];
         if (owed <= minted) return;
         uint256 count = owed - minted;
@@ -701,11 +704,19 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     ) internal {
         address referrer = accounts[from].referrer;
         if (referrer == address(0)) return;
+        if (accounts[referrer].selfVolume < MIN_REWARD_SELF) return;
         uint256 reward = (amount * directReferralBps) / BPS_DENOMINATOR;
         if (reward == 0) return;
         accounts[referrer].directRewards += reward;
         totalDirectAccrued += reward;
         emit DirectRewardAccrued(referrer, from, reward);
+    }
+
+    function _nftsOwed(
+        uint256 selfVolume
+    ) internal pure returns (uint256) {
+        if (selfVolume < NFT_MIN_SELF) return 0;
+        return selfVolume / NFT_UNIT;
     }
 
     function _isValidInviteCode(

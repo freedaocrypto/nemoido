@@ -29,7 +29,7 @@ library NemoNetworks {
 
     function bscTestnet() internal pure returns (Params memory p) {
         p.chainId = 97;
-        p.usdt = address(0);
+        p.usdt = 0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57;
         p.rewardsDelay = 1 hours;
         _shared(p);
         p.weekDuration = 1 hours;

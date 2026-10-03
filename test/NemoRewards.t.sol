@@ -87,11 +87,10 @@ contract NemoRewardsTest is NemoIdoBase {
 
     function test_rootAboveGlobalCapReverts() public {
         _register(alice, "ALICE001", "");
-        _register(bob, "BOB00001", "ALICE001");
-        _contribute(bob, 1000 * UNIT);
+        _contribute(alice, 1000 * UNIT);
         vm.prank(publisher);
         vm.expectRevert(NemoRewards.CapExceeded.selector);
-        rewards.publishRoot(_leaf(alice, 200 * UNIT), bytes32("h"), 200 * UNIT, "");
+        rewards.publishRoot(_leaf(alice, 251 * UNIT), bytes32("h"), 251 * UNIT, "");
     }
 
     function test_mainnetParamsRejectLocalChain() public {

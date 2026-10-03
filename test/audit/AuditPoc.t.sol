@@ -138,17 +138,19 @@ contract AuditPocTest is NemoIdoBase {
         assertEq(rewards.totalTeamPaid(), 20 * UNIT);
     }
 
-    /// L-1: direct referral at the 25% ceiling leaves no room for any team payout.
+    /// L-1: a qualified referrer at 25% direct uses up the cap created by that deposit.
     function test_L1_directAtCapStarvesTeam() public {
-        vm.prank(owner);
-        ido.setDirectReferralBps(2500);
         _register(alice, "ALICE001", "");
         _register(bob, "BOB00001", "ALICE001");
+        _contribute(alice, 100 * UNIT);
+        vm.prank(owner);
+        ido.setDirectReferralBps(2500);
         _contribute(bob, 10_000 * UNIT);
+        assertEq(_direct(alice), 2_500 * UNIT);
 
         vm.prank(owner);
         vm.expectRevert(NemoRewards.CapExceeded.selector);
-        rewards.publishRoot(_leaf(alice, 1 * UNIT), bytes32("h"), 1 * UNIT, "");
+        rewards.publishRoot(_leaf(alice, 26 * UNIT), bytes32("h"), 26 * UNIT, "");
     }
 
     /// L-2 fixed: there is no on-chain challenge entry. A stranger cannot publish.

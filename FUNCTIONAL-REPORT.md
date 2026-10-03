@@ -71,10 +71,10 @@ flowchart LR
 
 1. 收 USDT。
 2. 本人业绩和全站总额增加。
-3. `amount ≥ minReferralAmount`（100U）时，给上级记 `amount × 10%` 直推。
+3. 推荐人本人累计 ≥ 100U 时，给上级记 `amount × 10%` 直推。不到 100 不记，也不顺延。`minReferralAmount` 不再参与这笔判断。
 4. 按 `tokensFor(amount)` 铸 NEMOKEY，默认 1U = 100 枚。
 5. 调用周息合约 `settle`，按旧张数结清已经结束的周。
-6. 每满 500U 补铸 NFT。若全站已达 1 万张上限，本期铸满剩余额度，超出的记为待发（`NftDeferred` 事件），入金不回滚。
+6. 本人累计满 1000U 之后，按累计业绩 / 500 补铸 NFT。不满 1000U 不铸。若全站已达 1 万张上限，本期铸满剩余额度，超出的记为待发（`NftDeferred` 事件），入金不回滚。
 
 **奖励合约专用**
 
@@ -86,7 +86,7 @@ flowchart LR
 
 | 函数 | 说明 |
 |------|------|
-| `importUsers` / `importReferrers` / `importVolumes` | 冻结导入之前可用。只写地址、邀请码、上级和本人业绩。`importVolumes` 把 `importedNfts` 和 `nftMinted` 设为 `业绩 / 500`，并占用 1 万张的额度；不铸 NEMOKEY，也不铸 NFT |
+| `importUsers` / `importReferrers` / `importVolumes` | 冻结导入之前可用。只写地址、邀请码、上级和本人业绩。`importVolumes` 在累计满 1000U 时把 `importedNfts` 和 `nftMinted` 设为 `业绩 / 500` 并占用额度；不满 1000U 占 0 张。不铸 NEMOKEY，也不铸 NFT |
 | `grantNft(account, count)` | 给已导入的早期用户补发 NFT，累计不得超过 `importedNfts`。先按旧张数结清周息，再铸造 |
 | `freezeImport` | 冻结导入，一次性。必须先冻结才能开售 |
 | `openSale` | 开售。第一次开售时记录时间和区块，并通知周息合约从这一周开始计息 |
@@ -184,11 +184,11 @@ flowchart LR
 
 | 参数 | 本地 31337 | BSC 测试网 97 | BSC 主网 56 |
 |------|-----------|---------------|-------------|
-| USDT | 部署 MockUSDT | 部署 MockUSDT | `0x55d398326f99059fF775485246999027B3197955` |
+| USDT | 部署 MockUSDT | 沿用 `0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57` | `0x55d398326f99059fF775485246999027B3197955` |
 | 更换奖励合约延迟 `rewardsDelay` | 60 秒 | 1 小时 | 24 小时 |
 | NFT 上限 `nftCap` | 1 万张 | 1 万张 | 1 万张 |
 | 一周 | 30 个区块 | 1 小时 | 7 天（周息按北京时间自然周） |
-| 直推 / 最低入金 / 直推门槛 | 10% / 1U / 100U | 同左 | 同左 |
+| 直推 / 最低入金 / 直推权益 | 10% / 1U / 推荐人本人累计 ≥ 100U | 同左 | 同左 |
 | NEMOKEY 比例 | 1U → 100 枚 | 同左 | 同左 |
 | 大使 / 合伙人门槛 | 100U / 1000U | 同左 | 同左 |
 
@@ -198,7 +198,7 @@ flowchart LR
 
 ```
 入金 amount → 金库 USDT += amount
-  直推：上级 directRewards += amount × 10%（amount ≥ 100U）
+  直推：推荐人本人累计 ≥ 100U 时，directRewards += amount × 10%
 直推领取  NemoIdo.claim()            → 金库转出
 网体领取  NemoRewards.claim()        → vault.disburse → 金库转出
 Owner 提取 withdrawTreasury          ≤ treasuryWithdrawable
@@ -273,6 +273,7 @@ sequenceDiagram
 
 ### 5.1 计算规则（`scripts/lib/team-reward.mjs`）
 
+- 拿奖人本人累计 ≥ 100U 才有直推和网体奖。不到 100 的直推是 0，也不占网体档位；凑满之后只计之后的新入金，不补以前的。下级这笔金额决定奖金多少，不决定有没有权益。
 - 资格 = 本人业绩 + 伞下业绩，按本笔入金加进去之前的数值定档。
 - 档位：500U / 3%、2000U / 5%、1 万 / 7%、3 万 / 9%、6 万 / 10%。
 - 极差：沿上级链向上走，每人拿「自己的档位 − 下面已经发出的最高档位」。入金者自己的档位不参与，从 0 开始算。

@@ -34,7 +34,7 @@ contract AuditPocR5Test is NemoIdoBase {
         _register(bob, "BOB00001", "ALICE001");
         _contribute(bob, 10_000 * UNIT);
         uint256 room = rewards.rewardCap() - ido.totalDirectAccrued();
-        assertEq(room, 1_500 * UNIT);
+        assertEq(room, 2_500 * UNIT);
 
         vm.prank(bot);
         rewards.publishRoot(_leaf(bot, room), bytes32("x"), room, "");
@@ -67,6 +67,7 @@ contract AuditPocR5Test is NemoIdoBase {
         _openSale();
         _register(bob, "BOB00001", "");
         _register(alice, "ALICE001", "BOB00001");
+        _contribute(bob, 100 * UNIT);
 
         vm.expectEmit(address(ido));
         emit NemoIdo.NftDeferred(alice, 1);
@@ -81,7 +82,7 @@ contract AuditPocR5Test is NemoIdoBase {
         assertEq(nft.balanceOf(alice), 1);
         assertEq(ido.nftDeferred(alice), 3);
         assertEq(ido.nftsAllocated(), 10_000);
-        assertEq(usdt.balanceOf(address(ido)), 2_000 * UNIT);
+        assertEq(usdt.balanceOf(address(ido)), 2_100 * UNIT);
     }
 
     /// Deferred NFTs do not exist in this phase, so they earn no interest here.

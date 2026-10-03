@@ -66,7 +66,7 @@ contract NemoNftInterestTest is NemoIdoBase {
         _openSale();
         _register(alice, "ALICE001", "");
         _contribute(alice, 500 * UNIT);
-        assertEq(nft.balanceOf(alice), 1);
+        assertEq(nft.balanceOf(alice), 0);
         _advanceWeeks(1);
         assertEq(interest.pending(alice), 0);
         vm.prank(alice);
@@ -179,8 +179,8 @@ contract NemoNftInterestTest is NemoIdoBase {
         _openSale();
         _register(alice, "ALICE001", "");
         assertEq(ido.nftCap(), 10_000);
-        _contribute(alice, 500 * UNIT);
-        assertEq(ido.nftsAllocated(), 1);
+        _contribute(alice, 1000 * UNIT);
+        assertEq(ido.nftsAllocated(), 2);
     }
 
     function test_rejectsBadTiersAndASecondInterestLink() public {
