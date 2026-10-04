@@ -21,7 +21,7 @@ forge build
 
 ## 2. 预览部署
 
-已有 `.env` 必须配置 `BSC_TESTNET_RPC`、`TEST_PRIVATE_KEY` 和测试数据库连接；脚本不会替你选择数据库或修改连接串。`TEST_PRIVATE_KEY` 对应地址需要测试 BNB。
+已有 `.env` 必须配置 `BSC_TESTNET_RPC`、`TEST_PRIVATE_KEY`、`BSC_TESTNET_USDT` 和测试数据库连接；脚本不会替你选择数据库或修改连接串。`BSC_TESTNET_USDT` 必须是 `0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57`，与 `NemoNetworks.bscTestnet()` 里的地址相同。改 `.env` 不会换成另一份币，合约参数仍用这个地址，两边不一致时写回会被拒绝。`TEST_PRIVATE_KEY` 对应地址需要测试 BNB，并且必须仍是这份 MockUSDT 的 owner。
 
 ```bash
 npm run deploy:testnet
@@ -35,7 +35,7 @@ npm run deploy:testnet
 npm run deploy:testnet -- --apply
 ```
 
-脚本执行 `Deploy.s.sol:Deploy`，固定 `NETWORK=bscTestnet` 和 NFT 图片地址，部署五个新合约，USDT 使用 `.env` 里已有的 `BSC_TESTNET_USDT`。广播记录里如果出现新的 MockUSDT，脚本拒绝写回。仅在部署成功、本次 broadcast 产物有效、五笔创建回执链上成功、金库 `usdt()` 等于现有 MockUSDT、其余关联和五个 Owner 均正确后写回 `.env`：
+脚本执行 `Deploy.s.sol:Deploy`，固定 `NETWORK=bscTestnet`。USDT 用合约参数里的现有 MockUSDT，不新铸。NFT 图片先设为 `https://test.freedao.life/media/nomad/rwa-nft-pass.webp`。广播记录里如果出现新的 MockUSDT，脚本拒绝写回。仅在部署成功、本次 broadcast 产物有效、五笔创建回执链上成功、金库 `usdt()` 等于 `.env` 的 `BSC_TESTNET_USDT`、其余关联和五个 Owner 均正确后写回 `.env`：
 
 - 五个新的 `BSC_TESTNET_*` 地址。`BSC_TESTNET_USDT` 保持不动
 - `INDEX_START_BLOCK` 和 `START_BLOCK`：五笔创建交易中最早区块，保证不漏初始事件
@@ -54,6 +54,15 @@ npm run deploy:testnet -- --sync
 ```
 
 `--sync` 不广播，但必须确认 run-latest 就是要恢复的这批部署；它会重新核对回执、Owner和金库关联。
+
+部署写入的是 WebP。若 BSCScan 不显示这张图，等 `https://test.freedao.life/media/nomad/rwa-nft-pass.png` 能公开打开后，再把共享图片改成 PNG。先预览，确认后再发送：
+
+```bash
+npm run nft:image
+npm run nft:image -- --apply
+```
+
+这一步只改已部署 NFT 的 `imageURI`，不重新部署，也不动 USDT 和金库。
 
 ## 4. 自动核对配置
 
@@ -85,7 +94,7 @@ npm run reset:testnet-db -- --apply
 
 ## 6. 导入前面那 30 个地址
 
-来源是 FreeDao 生产库，经 `scripts/import-prod-to-testnet.mjs` 导出再上链。只写邀请码、上级和本人业绩，不铸 NEMOKEY、不铸 NFT、不发直推。导入业绩不进上级伞下，也不产生网体奖。
+来源是 FreeDao 生产库，经 `scripts/import-prod-to-testnet.mjs` 导出再上链。只写邀请码、上级和本人业绩，不铸 NEMOKEY、不铸 NFT、不发直推。导入业绩算本人累计，所以导入满 100 USDT 的地址，之后下级再入金时可以拿直推和网体奖；导入本身不发这些奖，也不进上级伞下。不满 1000 USDT 不占 NFT 额度。满 1000 USDT 按累计业绩除以 500 占用额度，仍然不铸造。
 
 `docs/bsc-testnet-deposits.csv` 是旧合约上的测试入金，不要导入。
 
@@ -170,7 +179,13 @@ Preview 上的 `DATABASE_URL` 必须仍是测试库 `ep-empty-king`。这个脚�
 
 ## 11. 本地索引，再用币安钱包测
 
-登录地址必须等于钱包当前账户。开售后用新 USDT 入金，看 NEMOKEY、NFT 张数和直推。旧合约上的持仓不会出现。
+登录地址必须等于钱包当前账户。开售后用现有 MockUSDT 入金。旧金库上的 NEMOKEY、NFT 和直推不会出现；USDT 余额仍在原来那份币上。
+
+入金后按这个口径核对，不要用旧规则：
+
+- 推荐人本人累计满 100 USDT（含导入）才有直推和网体奖。下级入 50 USDT，直推是 5。本人不到 100 的，这两项都是 0，直推不顺延。凑满 100 不补以前的下级入金。
+- NFT 要本人累计满 1000 USDT 才有。1000 USDT 是 2 张，1500 USDT 是 3 张。只入 500 USDT 可以有网体 3% 资格，NFT 是 0，因此没有周息。
+- 最低入金仍是 1 USDT。不再要求下级这一笔必须满 100 USDT。
 
 网体业绩在本地跑，从 `START_BLOCK` 往后扫当前 `IDO_ADDRESS`：
 
