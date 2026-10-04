@@ -5,6 +5,7 @@ import {Test} from "../lib/forge-std/src/Test.sol";
 import {NemoIdoBase} from "./helpers/NemoIdoBase.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
 import {NemoNetworks} from "../src/network/NemoNetworks.sol";
+import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {NemoToken} from "../src/NemoToken.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
@@ -184,6 +185,29 @@ contract NemoTokenTest is Test {
         vm.prank(alice);
         token.transfer(campaign, 10e18);
         assertEq(token.balanceOf(campaign), 70e18);
+    }
+
+    function test_ownerCanOpenTransfersForEveryone() public {
+        vm.prank(minter);
+        token.mint(alice, 10e18);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        token.setTransfersEnabled(true);
+
+        vm.expectEmit(address(token));
+        emit NemoToken.TransfersEnabledUpdated(true);
+        vm.prank(owner);
+        token.setTransfersEnabled(true);
+        vm.prank(alice);
+        token.transfer(bob, 4e18);
+        assertEq(token.balanceOf(bob), 4e18);
+
+        vm.prank(owner);
+        token.setTransfersEnabled(false);
+        vm.prank(bob);
+        vm.expectRevert(NemoToken.TransfersLocked.selector);
+        token.transfer(alice, 1e18);
+        assertEq(token.balanceOf(bob), 4e18);
     }
 
     function test_pauseBlocksMint() public {

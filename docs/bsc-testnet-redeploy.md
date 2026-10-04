@@ -8,6 +8,8 @@
 
 不要调用 `endIdo`。
 
+这次部署的 `rewardsDelay` 是 **10 分钟**（`NemoNetworks.bscTestnet()`）。主网仍是 24 小时。这个值在金库构造时写死，部署后改不了。部署脚本会核对链上是 600 秒，不是就拒绝写回 `.env`。
+
 下面每一步都在 `/Users/jack/git/github/nemoido`。部署脚本会自动更新 `.env`，再按这份 `.env` 清测试库、导入、开售，最后把公开地址上传到 Vercel Preview。无需复制日志里的地址、区块或 publisher 地址。要求 Node.js 22.16+（支持 `util.parseEnv`），Foundry 在 `~/.foundry/bin`。
 
 ## 1. 编译
@@ -74,17 +76,24 @@ node --env-file=.env -e 'console.log({ ido: process.env.BSC_TESTNET_IDO, indexer
 
 `DATABASE_URL` 必须仍是测试库 `ep-empty-king`。正式库主机名含 `ep-autumn-cake`，清库脚本会拒绝。部署脚本不改数据库连接。
 
-## 5. 重置这份新金库的测试库记录
+## 5. 清空测试库里和链对不上的记录
 
-只删 chain id 97、并且金库等于当前 `BSC_TESTNET_IDO` 的行：`nemo_team_proof`、`nemo_team_root`、`nemo_team_account`、`nemo_indexer_state`、`nemo_invite_cache`。旧金库的行留着。不删周息边界，不算业绩，不改链上数据。
+脚本先打印完整数据库连接。主机名必须包含 `ep-empty-king`。正式库主机名含 `ep-autumn-cake`，或其他主机，都会拒绝。不改链上数据。
 
-先预览行数：
+会清空：
+
+- 网站账号和邀请关系：`nomad_users`，以及订单、提现、直推记录、余额快照、活动邀请和积分等挂在这些账号上的表
+- 链 97 上所有金库的 `nemo_team_proof`、`nemo_team_root`、`nemo_team_account`、`nemo_indexer_state`、`nemo_invite_cache`，不限当前金库地址
+
+留下 `nemo_interest_boundary`、活动任务和奖品配置、旧站 `User` / `Order`。
+
+先看连接和行数。输出里的 `host` 必须是测试库，`database` 必须是 `neondb`：
 
 ```bash
 npm run reset:testnet-db
 ```
 
-输出里的 `ido` 必须是第 4 步的新金库，`indexerMatches` 必须是 `true`，`host` 必须是测试库。再删除：
+确认连接无误后再删除：
 
 ```bash
 npm run reset:testnet-db -- --apply
@@ -235,3 +244,54 @@ npm run publish:root -- --apply
 ```
 
 root明细核对请使用 `npm run verify:root -- <发布输出的明细文件>`。导入预览必须确认30条符合当前生产库；数量变化时不要盲目套用历史30条。全程不调用 `scale-network.sh` 或 `endIdo`。
+
+## 12. 多签接管，再换奖励合约
+
+先完成上面的开售，并用非多签地址做一轮入金、索引、发布，至少领一笔网体奖。记下该地址的 `claimed` 和当时的 `totalTeamPaid`。
+
+多签用钱包文件 index 17、18、19、20。任意 3 个签名立即生效。下面默认用 17、18、19 签名，gas 由 `TEST_PRIVATE_KEY` 支付。先预览，再加 `--apply`。
+
+```bash
+forge build
+npm run multisig:testnet -- deploy
+npm run multisig:testnet -- deploy --apply
+npm run multisig:testnet -- transfer
+npm run multisig:testnet -- transfer --apply
+npm run multisig:testnet -- accept
+npm run multisig:testnet -- accept --apply
+npm run multisig:testnet -- exec --apply
+npm run multisig:testnet -- replace --apply
+```
+
+`transfer` 只是发起。`accept` 之后五个合约的 `owner()` 才等于 `TESTNET_MULTISIG`。`exec` 把金库的最低推荐额设成当前值，只验证权限。`replace` 把 index 20 换成 index 16，再换回来。换回后签名人仍是 17、18、19、20。
+
+然后部署下一份奖励合约。档位不在合约里：切换区块之前仍是 500 / 2,000 / 10,000 / 30,000 / 60,000 USDT 对应 3% / 5% / 7% / 9% / 10%；从接受交易所在区块起，新入金改为 1,000 / 10,000 / 80,000 USDT 对应 3% / 5% / 10%。新合约会种入旧的已领金额，避免同一笔奖领两次。
+
+```bash
+npm run rewards:migrate -- deploy
+npm run rewards:migrate -- deploy --apply
+npm run rewards:migrate -- propose
+npm run rewards:migrate -- propose --apply
+```
+
+提议后等 `proposedRewardsEta`。测试网是 10 分钟。到点再接受。不要清索引库，也不要改 `START_BLOCK`。
+
+```bash
+npm run rewards:migrate -- accept
+npm run rewards:migrate -- accept --apply
+```
+
+接受成功后 `.env` 的 `BSC_TESTNET_REWARDS`、`REWARDS_ADDRESS` 改为新地址，并写入 `TEAM_TIER_SWITCH_BLOCK`。再用非多签地址入金，然后：
+
+```bash
+CHUNK_BLOCKS=50000 npm run index:rewards
+npm run publish:root
+npm run publish:root -- --apply
+npm run verify:root -- <发布输出的明细文件>
+```
+
+核对：
+
+- 第一轮领过的地址，用旧累计额再领，合约拒绝。
+- 切换之后的新入金按新三档计算，第一轮的网体奖数额不变。
+- 直推仍在金库上，不受这次更换影响。

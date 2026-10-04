@@ -10,6 +10,9 @@ import {
   directOf,
   seedSelf,
   teamOf,
+  TIERS,
+  TIERS_V2,
+  tiersForBlock,
 } from "./team-reward.mjs";
 
 const golden = JSON.parse(readFileSync(new URL("../fixtures/team-golden.json", import.meta.url), "utf8"));
@@ -421,4 +424,25 @@ test("alternating qualified links keep the differential gaps", () => {
   assert.equal(teamOf(s, "e"), u(50));
   assert.equal(teamOf(s, "c"), u(1663) / 10n);
   assert.equal(teamOf(s, "a"), u(10977) / 10n);
+});
+
+test("v2 tiers start at 1000, 10000 and 80000", () => {
+  assert.equal(bpsForQual(u(999), TIERS_V2), 0n);
+  assert.equal(bpsForQual(u(1000), TIERS_V2), 300n);
+  assert.equal(bpsForQual(u(10_000), TIERS_V2), 500n);
+  assert.equal(bpsForQual(u(80_000), TIERS_V2), 1000n);
+  assert.equal(tiersForBlock(99, "100"), TIERS);
+  assert.equal(tiersForBlock(100, "100"), TIERS_V2);
+  assert.equal(tiersForBlock(100, ""), TIERS);
+
+  function teamPaid(tiers) {
+    const s = createState();
+    bind(s, "up", null);
+    bind(s, "down", "up");
+    contribute(s, "up", u(500), { tiers });
+    contribute(s, "down", u(1000), { tiers });
+    return teamOf(s, "up");
+  }
+  assert.equal(teamPaid(TIERS), u(30));
+  assert.equal(teamPaid(TIERS_V2), 0n);
 });

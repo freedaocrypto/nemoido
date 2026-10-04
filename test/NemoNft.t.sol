@@ -15,13 +15,27 @@ contract NemoNftTest is NemoIdoBase {
         uint256 id,
         string memory image
     ) internal pure returns (string memory) {
+        return _expectedUri(id, image, false);
+    }
+
+    function _expectedUri(
+        uint256 id,
+        string memory image,
+        bool transferable
+    ) internal pure returns (string memory) {
+        string memory note = transferable ? "Transferable." : "Non-transferable.";
+        string memory flag = transferable ? "Yes" : "No";
         bytes memory json = abi.encodePacked(
             '{"name":"FREEDAO RWA Pass #',
             vm.toString(id),
-            '","description":"FREEDAO RWA Pass. Non-transferable. Face value 500 USDT.","image":"',
+            '","description":"FREEDAO RWA Pass. ',
+            note,
+            ' Face value 500 USDT.","image":"',
             image,
             '","attributes":[{"trait_type":"Face value","value":"500 USDT"},',
-            '{"trait_type":"Transferable","value":"No"}]}'
+            '{"trait_type":"Transferable","value":"',
+            flag,
+            '"}]}'
         );
         return string.concat("data:application/json;base64,", Base64.encode(json));
     }
@@ -158,6 +172,36 @@ contract NemoNftTest is NemoIdoBase {
         nft.transferFrom(alice, bob, id);
     }
 
+    function test_ownerCanEnableAndDisableTransfers() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1000 * UNIT);
+        uint256 id = 1;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        nft.setTransfersEnabled(true);
+
+        vm.expectEmit(address(nft));
+        emit NemoNFT.TransfersEnabledUpdated(true);
+        vm.expectEmit(address(nft));
+        emit IERC4906.BatchMetadataUpdate(1, 2);
+        vm.prank(owner);
+        nft.setTransfersEnabled(true);
+        assertEq(nft.tokenURI(id), _expectedUri(id, "", true));
+
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, id);
+        assertEq(nft.ownerOf(id), bob);
+
+        vm.prank(owner);
+        nft.setTransfersEnabled(false);
+        vm.prank(bob);
+        vm.expectRevert(NemoNFT.TransfersLocked.selector);
+        nft.transferFrom(bob, alice, id);
+        assertEq(nft.ownerOf(id), bob);
+    }
+
     function test_strangerCannotMint() public {
         vm.prank(alice);
         vm.expectRevert(NemoNFT.NotAuthorized.selector);
@@ -216,17 +260,23 @@ contract NemoNftTest is NemoIdoBase {
         assertEq(nft.balanceOf(alice), 0);
     }
 
-    function _one(address account) internal pure returns (address[] memory accounts) {
+    function _one(
+        address account
+    ) internal pure returns (address[] memory accounts) {
         accounts = new address[](1);
         accounts[0] = account;
     }
 
-    function _oneCode(string memory code) internal pure returns (bytes32[] memory codes) {
+    function _oneCode(
+        string memory code
+    ) internal pure returns (bytes32[] memory codes) {
         codes = new bytes32[](1);
         codes[0] = _code(code);
     }
 
-    function _oneAmount(uint256 amount) internal pure returns (uint256[] memory amounts) {
+    function _oneAmount(
+        uint256 amount
+    ) internal pure returns (uint256[] memory amounts) {
         amounts = new uint256[](1);
         amounts[0] = amount;
     }

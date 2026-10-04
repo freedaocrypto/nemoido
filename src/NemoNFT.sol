@@ -10,16 +10,19 @@ import {Base64} from "../lib/openzeppelin-contracts/contracts/utils/Base64.sol";
 import {Strings} from "../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 
 /// @title NemoNFT
-/// @notice Soulbound pass: one token per 500 USDT of self volume, minted by the vault.
-///         Transfers are permanently disabled. Weekly yield is paid by NemoNftInterest.
+/// @notice One token per 500 USDT of self volume, minted by the vault.
+///         Transfers are locked until the owner calls `setTransfersEnabled(true)`.
+///         Weekly yield is paid by NemoNftInterest and follows the current holder.
 ///         Every token shares one image; the owner can replace its URL at any time.
 contract NemoNFT is ERC721, Ownable2Step, IERC4906 {
     address public minter;
     uint256 public nextId;
     string public imageURI;
+    bool public transfersEnabled;
 
     event MinterUpdated(address indexed minter);
     event ImageURIUpdated(string imageURI);
+    event TransfersEnabledUpdated(bool enabled);
 
     error ZeroAddress();
     error NotAuthorized();
@@ -56,6 +59,15 @@ contract NemoNFT is ERC721, Ownable2Step, IERC4906 {
         if (nextId != 0) emit BatchMetadataUpdate(1, nextId);
     }
 
+    /// @notice Open or close holder-to-holder transfers. Minting stays allowed either way.
+    function setTransfersEnabled(
+        bool enabled
+    ) external onlyOwner {
+        transfersEnabled = enabled;
+        emit TransfersEnabledUpdated(enabled);
+        if (nextId != 0) emit BatchMetadataUpdate(1, nextId);
+    }
+
     function mint(
         address to,
         uint256 count
@@ -78,13 +90,19 @@ contract NemoNFT is ERC721, Ownable2Step, IERC4906 {
     ) public view override returns (string memory) {
         _requireOwned(tokenId);
         string memory id = Strings.toString(tokenId);
+        string memory note = transfersEnabled ? "Transferable." : "Non-transferable.";
+        string memory transferable = transfersEnabled ? "Yes" : "No";
         bytes memory json = abi.encodePacked(
             '{"name":"FREEDAO RWA Pass #',
             id,
-            '","description":"FREEDAO RWA Pass. Non-transferable. Face value 500 USDT.","image":"',
+            '","description":"FREEDAO RWA Pass. ',
+            note,
+            ' Face value 500 USDT.","image":"',
             imageURI,
             '","attributes":[{"trait_type":"Face value","value":"500 USDT"},',
-            '{"trait_type":"Transferable","value":"No"}]}'
+            '{"trait_type":"Transferable","value":"',
+            transferable,
+            '"}]}'
         );
         return string.concat("data:application/json;base64,", Base64.encode(json));
     }
@@ -101,7 +119,7 @@ contract NemoNFT is ERC721, Ownable2Step, IERC4906 {
         address auth
     ) internal override returns (address) {
         address from = _ownerOf(tokenId);
-        if (from != address(0) && to != address(0)) revert TransfersLocked();
+        if (from != address(0) && to != address(0) && !transfersEnabled) revert TransfersLocked();
         return super._update(to, tokenId, auth);
     }
 

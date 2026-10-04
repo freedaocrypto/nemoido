@@ -65,6 +65,8 @@ for (const [getter,key] of [['usdt','USDT'],['nemo','NEMOKEY'],['nft','NFT'],['r
   if (getAddress(await read('IDO',getter))!==updates[`BSC_TESTNET_${key}`]) throw new Error(`金库${getter}关联错误`);
 }
 for (const key of ['NEMOKEY','NFT','IDO','REWARDS','INTEREST']) if (getAddress(await read(key,'owner'))!==owner) throw new Error(`${key}Owner不一致`);
+const rewardsDelay = await client.readContract({address:updates.BSC_TESTNET_IDO,abi:parseAbi(['function rewardsDelay() view returns (uint256)']),functionName:'rewardsDelay'});
+if (rewardsDelay !== 600n) throw new Error(`测试网 rewardsDelay 应是 600 秒，实际 ${rewardsDelay}。确认源码已改成 10 minutes 后重新编译部署`);
 const block = blocks.reduce((a,b)=>a<b?a:b).toString();
 Object.assign(updates,{INDEX_START_BLOCK:block,START_BLOCK:block,IDO_ADDRESS:updates.BSC_TESTNET_IDO,REWARDS_ADDRESS:updates.BSC_TESTNET_REWARDS,RPC_URL:config.BSC_TESTNET_RPC,CHAIN_ID:'97',NETWORK:'bscTestnet',NFT_IMAGE_URI:'https://test.freedao.life/media/nomad/rwa-nft-pass.webp'});
 if (!config.PUBLISHER_PRIVATE_KEY) updates.PUBLISHER_PRIVATE_KEY = generatePrivateKey();

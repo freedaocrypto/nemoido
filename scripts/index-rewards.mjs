@@ -96,6 +96,7 @@ async function indexOnce(client, publicClient) {
 
     const stored = await loadAccounts(client, chainId, ido);
     const state = stateFromRows(stored);
+    state.tierSwitchBlock = process.env.TEAM_TIER_SWITCH_BLOCK || "";
     const origin = planChunk({ lastBlock: last, startBlock, safeHead, chunkBlocks }).from;
     const startedAt = Date.now();
     console.log(

@@ -19,7 +19,7 @@ library NemoNetworks {
     }
 
     function local() internal pure returns (Params memory p) {
-        p.chainId = 31337;
+        p.chainId = 31_337;
         p.usdt = address(0);
         p.rewardsDelay = 60;
         _shared(p);
@@ -30,7 +30,7 @@ library NemoNetworks {
     function bscTestnet() internal pure returns (Params memory p) {
         p.chainId = 97;
         p.usdt = 0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57;
-        p.rewardsDelay = 1 hours;
+        p.rewardsDelay = 10 minutes;
         _shared(p);
         p.weekDuration = 1 hours;
         p.weekByBlock = false;

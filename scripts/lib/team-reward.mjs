@@ -15,12 +15,26 @@ export const TIERS = [
   [60_000n * UNIT, 1_000n],
 ];
 
-export function bpsForQual(qual) {
+/** Used for deposits at or after TEAM_TIER_SWITCH_BLOCK. Earlier deposits stay on TIERS. */
+export const TIERS_V2 = [
+  [1_000n * UNIT, 300n],
+  [10_000n * UNIT, 500n],
+  [80_000n * UNIT, 1_000n],
+];
+
+export function bpsForQual(qual, tiers = TIERS) {
   let rate = 0n;
-  for (const [vol, bps] of TIERS) {
+  for (const [vol, bps] of tiers) {
     if (qual >= vol) rate = bps;
   }
   return rate;
+}
+
+/** Empty or "0" keeps every block on the original five tiers. */
+export function tiersForBlock(blockNumber, switchBlock) {
+  if (switchBlock == null || switchBlock === "" || switchBlock === "0") return TIERS;
+  const block = blockNumber == null ? 0n : BigInt(blockNumber);
+  return block >= BigInt(switchBlock) ? TIERS_V2 : TIERS;
 }
 
 export function createState() {
@@ -53,6 +67,7 @@ export function seedSelf(state, account, amount) {
 export function contribute(state, account, amount, opts = {}) {
   const directBps = opts.directBps ?? DIRECT_BPS;
   const minSelf = opts.minSelf ?? MIN_SELF;
+  const tiers = opts.tiers ?? TIERS;
   state.self.set(account, get(state.self, account) + amount);
 
   const ref = state.referrer.get(account) || null;
@@ -72,7 +87,7 @@ export function contribute(state, account, amount, opts = {}) {
   while (cursor) {
     const self = get(state.self, cursor);
     const qual = self + get(state.team, cursor);
-    const rate = self >= minSelf ? bpsForQual(qual) : 0n;
+    const rate = self >= minSelf ? bpsForQual(qual, tiers) : 0n;
     let reward = 0n;
     if (rate > prev) {
       reward = (amount * (rate - prev)) / BPS;

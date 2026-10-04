@@ -20,7 +20,12 @@
     "vercel:testnet-preview": "node scripts/upload-testnet-vercel-preview.mjs",
     "deploy:testnet": "node scripts/deploy-testnet.mjs",
     "publisher:testnet": "node scripts/set-testnet-publisher.mjs",
-    "nft:image": "node scripts/set-nft-image.mjs"
+    "nft:image": "node scripts/set-nft-image.mjs",
+    "multisig:testnet": "node scripts/multisig-testnet.mjs",
+    "treasury:withdraw": "node scripts/withdraw-treasury-testnet.mjs",
+    "allowlist:testnet": "node scripts/allowlist-testnet.mjs",
+    "mint:nemokey": "node scripts/mint-nemokey-testnet.mjs",
+    "rewards:migrate": "node scripts/rewards-migrate-testnet.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",

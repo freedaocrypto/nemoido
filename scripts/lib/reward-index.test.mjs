@@ -72,3 +72,17 @@ test("claim records the cumulative already withdrawn", () => {
   });
   assert.equal(accountRows(state)[0].claimedWei, 30n * UNIT);
 });
+
+test("deposits before the switch block stay on the old tiers", () => {
+  const state = emptyIndexState();
+  state.tierSwitchBlock = "100";
+  applyLog(state, { eventName: "Registered", args: { account: A, referrer: null }, blockNumber: 1 });
+  applyLog(state, { eventName: "Registered", args: { account: B, referrer: A }, blockNumber: 1 });
+  applyLog(state, { eventName: "Contributed", args: { account: A, amount: 500n * UNIT }, blockNumber: 50 });
+  applyLog(state, { eventName: "Contributed", args: { account: B, amount: 100n * UNIT }, blockNumber: 50 });
+  const midway = accountRows(state).find((row) => row.wallet === A);
+  assert.equal(midway.teamRewardWei, 3n * UNIT);
+  applyLog(state, { eventName: "Contributed", args: { account: B, amount: 1_000n * UNIT }, blockNumber: 100 });
+  const after = accountRows(state).find((row) => row.wallet === A);
+  assert.equal(after.teamRewardWei, 3n * UNIT);
+});

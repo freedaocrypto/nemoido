@@ -1,5 +1,5 @@
 import { getAddress } from "viem";
-import { bind, contribute, createState, seedSelf } from "./team-reward.mjs";
+import { bind, contribute, createState, seedSelf, tiersForBlock } from "./team-reward.mjs";
 
 function addr(value) {
   if (!value || value === "0x0000000000000000000000000000000000000000") return null;
@@ -37,7 +37,9 @@ export function applyLog(state, log) {
   if (name === "Contributed") {
     const account = key(log.args.account);
     if (!state.referrer.has(account)) bind(state, account, null);
-    contribute(state, account, BigInt(log.args.amount));
+    contribute(state, account, BigInt(log.args.amount), {
+      tiers: tiersForBlock(log.blockNumber, state.tierSwitchBlock),
+    });
     return;
   }
   if (name === "TeamClaimed") {

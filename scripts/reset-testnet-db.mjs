@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 删除新测试网金库在测试库里的索引记录。
- * 只匹配 chain id 97 和 .env 里的 BSC_TESTNET_IDO。正式库、其他金库不动。
- * 默认只打印行数。--apply 才删除。
+ * 清空测试库里会和重新部署的金库对不上的数据。
+ * 只连接主机名包含 ep-empty-king 的库。正式库直接拒绝。
+ * 先打印完整数据库连接。默认只打印行数。--apply 才删除。
  *
  *   node scripts/reset-testnet-db.mjs
  *   node scripts/reset-testnet-db.mjs --apply
@@ -10,37 +10,14 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { getAddress } from "viem";
-import { assertSafeReset, TESTNET_CHAIN_ID } from "./lib/testnet-ops.mjs";
+import {
+  assertSafeReset,
+  CHAIN_INDEX_TABLES,
+  SITE_RESET_TABLES,
+  TESTNET_CHAIN_ID,
+} from "./lib/testnet-ops.mjs";
 
 const ENV_FILE = process.env.NEMO_ENV_FILE || new URL("../.env", import.meta.url);
-
-const TABLES = [
-  {
-    name: "nemo_team_proof",
-    count: `SELECT count(*)::int AS n FROM nemo_team_proof WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-    delete: `DELETE FROM nemo_team_proof WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-  },
-  {
-    name: "nemo_team_root",
-    count: `SELECT count(*)::int AS n FROM nemo_team_root WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-    delete: `DELETE FROM nemo_team_root WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-  },
-  {
-    name: "nemo_team_account",
-    count: `SELECT count(*)::int AS n FROM nemo_team_account WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-    delete: `DELETE FROM nemo_team_account WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-  },
-  {
-    name: "nemo_indexer_state",
-    count: `SELECT count(*)::int AS n FROM nemo_indexer_state WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-    delete: `DELETE FROM nemo_indexer_state WHERE chain_id = $1 AND lower(ido_address) = lower($2)`,
-  },
-  {
-    name: "nemo_invite_cache",
-    count: `SELECT count(*)::int AS n FROM nemo_invite_cache WHERE "chainId" = $1 AND lower("idoAddress") = lower($2)`,
-    delete: `DELETE FROM nemo_invite_cache WHERE "chainId" = $1 AND lower("idoAddress") = lower($2)`,
-  },
-];
 
 function readEnv(file) {
   const text = readFileSync(file, "utf8");
@@ -53,28 +30,73 @@ function readEnv(file) {
   return env;
 }
 
+function quoteIdent(name) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`非法表名 ${name}`);
+  return `"${name}"`;
+}
+
 async function tableExists(client, name) {
   const { rows } = await client.query(`SELECT to_regclass($1) AS reg`, [`public.${name}`]);
   return Boolean(rows[0]?.reg);
 }
 
-export async function resetTestnetDb(client, { chainId, ido, apply }) {
+async function countTable(client, name) {
+  const { rows } = await client.query(`SELECT count(*)::int AS n FROM ${quoteIdent(name)}`);
+  return rows[0].n;
+}
+
+export async function resetTestnetDb(client, { chainId, apply }) {
   const counts = [];
   await client.query("BEGIN");
   try {
-    for (const table of TABLES) {
+    const siteTables = [];
+    for (const name of SITE_RESET_TABLES) {
+      if (!(await tableExists(client, name))) {
+        counts.push({ table: name, rows: 0, missing: true });
+        continue;
+      }
+      siteTables.push(name);
+      counts.push({ table: name, rows: await countTable(client, name) });
+    }
+    if (await tableExists(client, "VerificationCode")) {
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM "VerificationCode" WHERE "nomadUserId" IS NOT NULL`,
+      );
+      counts.push({ table: "VerificationCode.nomadUserId", rows: rows[0].n });
+    }
+    if (apply && siteTables.length > 0) {
+      if (await tableExists(client, "VerificationCode")) {
+        await client.query(`DELETE FROM "VerificationCode" WHERE "nomadUserId" IS NOT NULL`);
+      }
+      for (const name of siteTables) {
+        if (name === "nomad_users") {
+          await client.query(`UPDATE nomad_users SET "referrerId" = NULL`);
+        }
+        await client.query(`DELETE FROM ${quoteIdent(name)}`);
+      }
+      if (await tableExists(client, "activity_tasks")) {
+        await client.query(`UPDATE activity_tasks SET "claimedCount" = 0`);
+      }
+    }
+
+    for (const table of CHAIN_INDEX_TABLES) {
       if (!(await tableExists(client, table.name))) {
         counts.push({ table: table.name, rows: 0, missing: true });
         continue;
       }
+      const where = `${table.chainColumn} = $1`;
       if (apply) {
-        const deleted = await client.query(table.delete, [chainId, ido]);
+        const deleted = await client.query(`DELETE FROM ${quoteIdent(table.name)} WHERE ${where}`, [chainId]);
         counts.push({ table: table.name, rows: deleted.rowCount });
       } else {
-        const selected = await client.query(table.count, [chainId, ido]);
+        const selected = await client.query(
+          `SELECT count(*)::int AS n FROM ${quoteIdent(table.name)} WHERE ${where}`,
+          [chainId],
+        );
         counts.push({ table: table.name, rows: selected.rows[0].n });
       }
     }
+
     if (apply) await client.query("COMMIT");
     else await client.query("ROLLBACK");
   } catch (error) {
@@ -88,24 +110,27 @@ async function main() {
   const apply = process.argv.includes("--apply");
   const env = readEnv(ENV_FILE);
   const databaseUrl = env.DATABASE_URL_UNPOOLED || env.DATABASE_URL;
-  const { host, ido } = assertSafeReset({
+  const target = assertSafeReset({
     databaseUrl,
     chainId: TESTNET_CHAIN_ID,
     idoAddress: env.BSC_TESTNET_IDO,
   });
   const indexerIdo = env.IDO_ADDRESS ? getAddress(env.IDO_ADDRESS) : "";
+  console.log(`数据库连接: ${target.connection}`);
   console.log(
     JSON.stringify({
       apply,
-      host,
+      user: target.user,
+      host: target.host,
+      database: target.database,
       chainId: TESTNET_CHAIN_ID,
-      ido,
+      ido: target.ido,
       indexerIdo: indexerIdo || null,
-      indexerMatches: !indexerIdo || indexerIdo === ido,
+      indexerMatches: !indexerIdo || indexerIdo === target.ido,
     }),
   );
-  if (indexerIdo && indexerIdo !== ido) {
-    console.log("IDO_ADDRESS 仍指向另一份金库。这次只清除 BSC_TESTNET_IDO。索引脚本要改用这份新地址，否则还会去写旧记录。");
+  if (indexerIdo && indexerIdo !== target.ido) {
+    console.log("IDO_ADDRESS 与 BSC_TESTNET_IDO 不一致。索引行会按链 97 全部清掉，不限金库地址。");
   }
 
   const { default: pg } = await import("pg");
@@ -115,11 +140,13 @@ async function main() {
   });
   await client.connect();
   try {
-    const counts = await resetTestnetDb(client, { chainId: TESTNET_CHAIN_ID, ido, apply });
+    const identity = await client.query(`SELECT current_user AS "user", current_database() AS database`);
+    console.log(`已连上: user=${identity.rows[0].user} database=${identity.rows[0].database} host=${target.host}`);
+    const counts = await resetTestnetDb(client, { chainId: TESTNET_CHAIN_ID, apply });
     for (const row of counts) {
       console.log(`${row.table} ${row.missing ? "不存在" : apply ? "已删除" : "将删除"} ${row.rows}`);
     }
-    if (!apply) console.log("dry-run。确认后加 --apply 才会删除。");
+    if (!apply) console.log("dry-run。核对上面的数据库连接后，加 --apply 才会删除。");
   } finally {
     await client.end();
   }

@@ -166,7 +166,7 @@ flowchart LR
 
 - 18 位小数，`CAP = 10 亿枚`，不预铸。
 - 铸币方：金库（入金）、`interestMinter`（周息合约）、Owner（早期用户本金）。Owner 手动铸造的数量不计入金库的 `totalNemoAllocated`。
-- 默认不可转。转账时 `from` 或 `to` 至少一方在 Owner 设置的白名单里才放行；铸造和销毁不受限制。
+- 默认不可转。`transfersEnabled` 为 false 时，`from` 或 `to` 至少一方在白名单里才放行。Owner 调用 `setTransfersEnabled(true)` 后所有持有人都可以互转，再设为 `false` 则回到白名单规则。铸造和销毁不受这两项限制。
 - `pause` 同时停止转账和铸造。暂停期间入金和领周息都会失败。
 - `rescue` 可以取回误转进来的其他代币，不能取 NEMOKEY 本身。
 
@@ -175,7 +175,7 @@ flowchart LR
 - 构造参数 `(owner, name, symbol)`。
 - 只有金库能铸，编号自增，逐张铸造。
 - `setMinter` 只能调用一次，之后不能更换铸币地址。
-- 除铸造和销毁外禁止转移（灵魂绑定）。
+- 默认不可转。Owner 调用 `setTransfersEnabled(true)` 后持有人之间可以转，再设为 `false` 则重新锁上。铸造不受这个开关影响。周息按当前持有人的 `balanceOf` 计算。
 - 周息由 `NemoNftInterest` 支付，这张合约里没有收益逻辑。
 
 ### 2.6 NemoNetworks（网络参数）
@@ -185,7 +185,7 @@ flowchart LR
 | 参数 | 本地 31337 | BSC 测试网 97 | BSC 主网 56 |
 |------|-----------|---------------|-------------|
 | USDT | 部署 MockUSDT | 沿用 `0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57` | `0x55d398326f99059fF775485246999027B3197955` |
-| 更换奖励合约延迟 `rewardsDelay` | 60 秒 | 1 小时 | 24 小时 |
+| 更换奖励合约延迟 `rewardsDelay` | 60 秒 | 10 分钟 | 24 小时 |
 | NFT 上限 `nftCap` | 1 万张 | 1 万张 | 1 万张 |
 | 一周 | 30 个区块 | 1 小时 | 7 天（周息按北京时间自然周） |
 | 直推 / 最低入金 / 直推权益 | 10% / 1U / 推荐人本人累计 ≥ 100U | 同左 | 同左 |

@@ -10,9 +10,9 @@ import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/uti
 
 /// @title NemoToken
 /// @notice Pre-issue IDO voucher (name/symbol: nemokey / NEMOKEY).
-///         On-demand mint up to CAP. Default transfers are locked; Owner may
-///         allowlist campaign wallets so they can send points to users.
-///         Recipients who are not allowlisted cannot transfer onward.
+///         On-demand mint up to CAP. Transfers are locked unless the owner opens
+///         `setTransfersEnabled`, or one side of the transfer is on the allowlist.
+///         Recipients who are not allowlisted cannot transfer onward while the switch is off.
 contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
 
@@ -21,10 +21,13 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
     address public minter;
     address public interestMinter;
     mapping(address => bool) public transferAllowlist;
+    /// @notice When true, any holder can transfer. When false, only the allowlist rule applies.
+    bool public transfersEnabled;
 
     event MinterUpdated(address indexed minter);
     event InterestMinterUpdated(address indexed interestMinter);
     event TransferAllowlistUpdated(address indexed account, bool allowed);
+    event TransfersEnabledUpdated(bool enabled);
 
     error ZeroAddress();
     error RescueSelf();
@@ -63,6 +66,14 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         emit TransferAllowlistUpdated(account, allowed);
     }
 
+    /// @notice Open transfers for every holder, or return to the allowlist-only rule.
+    function setTransfersEnabled(
+        bool enabled
+    ) external onlyOwner {
+        transfersEnabled = enabled;
+        emit TransfersEnabledUpdated(enabled);
+    }
+
     /// @notice Vault (deposits), interest minter (NFT yield), or Owner (manual grants) may mint.
     function mint(
         address to,
@@ -98,7 +109,7 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         address to,
         uint256 value
     ) internal override(ERC20, ERC20Pausable) {
-        if (from != address(0) && to != address(0)) {
+        if (from != address(0) && to != address(0) && !transfersEnabled) {
             if (!transferAllowlist[from] && !transferAllowlist[to]) revert TransfersLocked();
         }
         super._update(from, to, value);
