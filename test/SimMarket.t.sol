@@ -767,7 +767,6 @@ contract SimMarket is Test {
         uint256 wd = usdtBal(ido.treasuryWithdrawable());
         uint256 reserved = usdtBal(ido.reservedRewards());
         uint256 week = ido.currentWeek();
-        uint256 per100 = ido.tokensPer100(week) / UNIT;
         uint256 contributed = usdtBal(ido.totalContributed());
         uint256 cobuilders = _cobuilderCount();
 
@@ -775,7 +774,6 @@ contract SimMarket is Test {
         console2.log(label);
         console2.log("block", block.number);
         console2.log("week", week);
-        console2.log("tokensPer100", per100);
         console2.log("contributedU", contributed);
         console2.log("contractUsdtU", bal);
         console2.log("treasuryWithdrawableU", wd);
@@ -793,9 +791,6 @@ contract SimMarket is Test {
             " |\n",
             "| currentWeek | ",
             vm.toString(week),
-            " |\n",
-            unicode"| tokensPer100 (枚/100U) | ",
-            vm.toString(per100),
             " |\n",
             unicode"| 累计入金 (U) | ",
             vm.toString(contributed),

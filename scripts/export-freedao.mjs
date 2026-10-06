@@ -42,14 +42,33 @@ async function loadFromPostgres() {
       WHERE status = 'confirmed'
       GROUP BY "userId"
     `);
+    const orders = await client.query(`
+      SELECT "userId" AS user_id, "amountUsdt" AS amount_usdt,
+             COALESCE("confirmedAt", "createdAt") AS confirmed_at
+      FROM nomad_contribution_orders
+      WHERE status = 'confirmed'
+      ORDER BY COALESCE("confirmedAt", "createdAt") ASC
+    `);
     const vol = new Map(volumes.rows.map((r) => [r.user_id, Number(r.self_usdt)]));
-    return users.rows.map((r) => ({
-      id: r.id,
-      wallet: r.wallet,
-      inviteCode: r.invite,
-      referrerId: r.referrer_id,
-      selfUsdt: vol.get(r.id) || 0,
-    }));
+    const ordersById = new Map();
+    for (const row of orders.rows) {
+      const list = ordersById.get(row.user_id) || [];
+      list.push({
+        usdt: Number(row.amount_usdt),
+        confirmedAt: new Date(row.confirmed_at).toISOString(),
+      });
+      ordersById.set(row.user_id, list);
+    }
+    return {
+      users: users.rows.map((r) => ({
+        id: r.id,
+        wallet: r.wallet,
+        inviteCode: r.invite,
+        referrerId: r.referrer_id,
+        selfUsdt: vol.get(r.id) || 0,
+      })),
+      ordersById,
+    };
   } finally {
     await client.end();
   }
@@ -62,9 +81,19 @@ function loadFromFile(path) {
   throw new Error("JSON must be an array or { users: [...] }");
 }
 
-const users = inPath ? loadFromFile(inPath) : await loadFromPostgres();
-const prepared = prepareImport(users);
+const loaded = inPath
+  ? { users: loadFromFile(inPath), ordersById: new Map() }
+  : await loadFromPostgres();
+if (inPath) {
+  for (const user of loaded.users) {
+    if (Array.isArray(user.orders)) loaded.ordersById.set(user.id, user.orders);
+  }
+}
+const prepared = prepareImport(loaded.users);
 const remapped = remapForNetwork(prepared.records, network);
+for (const record of remapped.records) {
+  record.orders = loaded.ordersById.get(record.id) || [];
+}
 const mapPath = resolve(arg("--map", `${outPath}.addresses.json`));
 
 const payload = {

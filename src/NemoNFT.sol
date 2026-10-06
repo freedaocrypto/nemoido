@@ -9,6 +9,10 @@ import {IERC4906} from "../lib/openzeppelin-contracts/contracts/interfaces/IERC4
 import {Base64} from "../lib/openzeppelin-contracts/contracts/utils/Base64.sol";
 import {Strings} from "../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 
+interface INemoVaultSettle {
+    function settleTransfer(address from, address to) external;
+}
+
 /// @title NemoNFT
 /// @notice One token per 500 USDT of self volume, minted by the vault.
 ///         Transfers are locked until the owner calls `setTransfersEnabled(true)`.
@@ -113,13 +117,20 @@ contract NemoNFT is ERC721, Ownable2Step, IERC4906 {
         return interfaceId == bytes4(0x49064906) || super.supportsInterface(interfaceId);
     }
 
+    /// @dev Mint path: the vault settles interest itself before calling `mint`.
+    ///      Transfer path: settle both sides via the vault before the balance moves,
+    ///      so weekly interest is paid once per week per token and never retroactively
+    ///      to a buyer who did not hold during those weeks.
     function _update(
         address to,
         uint256 tokenId,
         address auth
     ) internal override returns (address) {
         address from = _ownerOf(tokenId);
-        if (from != address(0) && to != address(0) && !transfersEnabled) revert TransfersLocked();
+        if (from != address(0) && to != address(0)) {
+            if (!transfersEnabled) revert TransfersLocked();
+            INemoVaultSettle(minter).settleTransfer(from, to);
+        }
         return super._update(to, tokenId, auth);
     }
 

@@ -10,24 +10,10 @@ import {NemoToken} from "../src/NemoToken.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
 contract NemoAllocationTest is NemoIdoBase {
-    function test_week1_quote_100u_is_10000() public view {
-        assertEq(ido.quote(100 * UNIT), 10_000 * UNIT);
-    }
-
-    function test_week1_quote_1000u_gets_2pct_bonus() public view {
-        assertEq(ido.quote(1000 * UNIT), 102_000 * UNIT);
-    }
-
-    function test_quote_999u_no_bonus() public view {
-        assertEq(ido.quote(999 * UNIT), 99_900 * UNIT);
-    }
-
-    function test_week2_quote_100u_is_9980() public {
+    function test_weekAdvancesAfterOneDuration() public {
         _openSale();
         vm.roll(block.number + 30);
         assertEq(ido.currentWeek(), 1);
-        assertEq(ido.tokensPer100(1), 9980 * UNIT);
-        assertEq(ido.quote(100 * UNIT), 9980 * UNIT);
     }
 
     function test_contributeMintsPlaceholderNemo() public {
@@ -56,13 +42,6 @@ contract NemoAllocationTest is NemoIdoBase {
 
         assertEq(nemo.balanceOf(alice), 0);
         assertEq(ido.totalNemoAllocated(), 0);
-    }
-
-    function test_paramChangeAppliesToQuote() public {
-        _openSale();
-        vm.prank(owner);
-        ido.setNemoSchedule(5000e18, 0, 7 days, 0);
-        assertEq(ido.quote(100 * UNIT), 5000 * UNIT);
     }
 
     function test_emptyVaultStillMintsOnContribute() public {
@@ -94,15 +73,6 @@ contract NemoAllocationTest is NemoIdoBase {
         new NemoIdo(address(usdt), address(nemo), address(nft), owner, NemoNetworks.local());
     }
 
-    function test_week2_ceilMatchesQuote() public {
-        _openSale();
-        vm.roll(block.number + 30);
-        uint256 amount = 1e18 + 1;
-        uint256 quoted = ido.quote(amount);
-        uint256 per100 = ido.tokensPer100(1);
-        uint256 expected = (amount * per100 + 100e18 - 1) / 100e18;
-        assertEq(quoted, expected);
-    }
 }
 
 contract NemoTokenTest is Test {

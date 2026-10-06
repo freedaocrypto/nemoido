@@ -22,12 +22,12 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant REWARD_CAP_BPS = 2500;
-    uint256 public constant USDT_UNIT_100 = 100e18;
     uint256 public constant NFT_UNIT = 500e18;
     /// @notice Own volume required before an account can earn direct or be treated as qualified upstream.
     uint256 public constant MIN_REWARD_SELF = 100e18;
     /// @notice Own volume required before any NFT is owed. Count is still `volume / NFT_UNIT`.
     uint256 public constant NFT_MIN_SELF = 1000e18;
+    uint256 public constant MAX_NFT_INTERESTS = 8;
 
     enum Role {
         None,
@@ -49,22 +49,18 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     IERC20 public immutable nemo;
     NemoNFT public immutable nft;
     bool public immutable weekByBlock;
+    /// @notice Length of one vault week. Local counts blocks; testnet counts seconds.
+    ///         Mainnet NFT interest uses the calendar week in `NemoNftInterest` and does not read this.
+    uint256 public immutable weekDuration;
 
     bool public importFrozen;
     bool public saleOpen;
     uint256 public saleOpenedAt;
     uint256 public saleOpenedBlock;
 
-    uint256 public baseTokensPer100 = 10_000e18;
-    uint256 public weeklyDecayAbs = 20e18;
-    uint256 public weekDuration;
-    uint256 public minTokensPer100;
-    uint256 public nemoBonusThreshold = 1000e18;
-    uint256 public nemoBonusBps = 200;
     uint256 public tokensPerUsdt;
 
     uint256 public minIdo;
-    uint256 public minReferralAmount;
     uint256 public ambassadorMin;
     uint256 public partnerMin;
     uint256 public directReferralBps;
@@ -79,6 +75,7 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     uint256 public proposedRewardsEta;
     uint256 public immutable rewardsDelay;
     address public nftInterest;
+    address[] public nftInterests;
     bool public idoEnded;
     uint256 public idoEndedWeek;
     uint256 public immutable nftCap;
@@ -89,6 +86,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     uint256 public totalDirectAccrued;
     uint256 public totalClaimed;
     uint256 public totalContributed;
+    /// @notice Sum of imported self volume. It is not USDT held by the vault.
+    ///         The reward cap counts it so historical deposits keep their 25% room.
+    uint256 public totalImported;
     uint256 public totalNemoAllocated;
 
     event Registered(address indexed account, bytes32 indexed code, address indexed referrer);
@@ -107,7 +107,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     event ReferrerImported(address indexed account, address indexed referrer);
     event VolumeImported(address indexed account, uint256 selfVolume);
     event DirectReferralBpsUpdated(uint256 bps);
-    event MinReferralAmountUpdated(uint256 amount);
     event MinIdoUpdated(uint256 amount);
     event IdentityThresholdsUpdated(uint256 ambassadorMin, uint256 partnerMin);
     event RewardsUpdated(address indexed rewards);
@@ -117,10 +116,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     event NftInterestUpdated(address indexed interest);
     event NftGranted(address indexed account, uint256 count);
     event TeamDisbursed(address indexed to, uint256 amount);
-    event NemoScheduleUpdated(
-        uint256 baseTokensPer100, uint256 weeklyDecayAbs, uint256 weekDuration, uint256 minTokensPer100
-    );
-    event NemoBonusUpdated(uint256 threshold, uint256 bps);
     event TokensPerUsdtUpdated(uint256 rate);
     event UnsoldNemoWithdrawn(address indexed to, uint256 amount);
 
@@ -146,7 +141,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     error InvalidSchedule();
     error WrongNetwork();
     error NotRewards();
+    error NotNft();
     error InterestAlreadySet();
+    error TooManyInterests();
     error RewardsAlreadySet();
     error RewardsDelayPending();
     error NoProposedRewards();
@@ -174,7 +171,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         weekDuration = params.weekDuration;
         tokensPerUsdt = params.tokensPerUsdt;
         minIdo = params.minIdo;
-        minReferralAmount = params.minReferralAmount;
         ambassadorMin = params.ambassadorMin;
         partnerMin = params.partnerMin;
         directReferralBps = params.directReferralBps;
@@ -237,16 +233,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         return (block.timestamp - saleOpenedAt) / weekDuration;
     }
 
-    function tokensPer100(
-        uint256 week
-    ) public view returns (uint256) {
-        uint256 decay = weeklyDecayAbs * week;
-        if (decay >= baseTokensPer100) return minTokensPer100;
-        uint256 per100 = baseTokensPer100 - decay;
-        if (per100 < minTokensPer100) return minTokensPer100;
-        return per100;
-    }
-
     function tokensFor(
         uint256 amount
     ) public view returns (uint256) {
@@ -267,18 +253,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         address account
     ) public view returns (uint256) {
         return accounts[account].selfVolume % NFT_UNIT;
-    }
-
-    /// @notice Historical week quote. Deposits mint with `tokensFor`, not this.
-    function quote(
-        uint256 amount
-    ) public view returns (uint256) {
-        uint256 per100 = tokensPer100(currentWeek());
-        uint256 nemoAmount = (amount * per100 + USDT_UNIT_100 - 1) / USDT_UNIT_100;
-        if (amount >= nemoBonusThreshold && nemoBonusBps > 0) {
-            nemoAmount = (nemoAmount * (BPS_DENOMINATOR + nemoBonusBps)) / BPS_DENOMINATOR;
-        }
-        return nemoAmount;
     }
 
     function register(
@@ -336,6 +310,18 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         if (bal < locked + amount) revert InsufficientTreasury();
         usdt.safeTransfer(to, amount);
         emit TeamDisbursed(to, amount);
+    }
+
+    /// @notice Called by the NFT before a holder-to-holder transfer moves the balance.
+    ///         Settles both sides at their pre-transfer balances so finished weeks are
+    ///         paid exactly once and the buyer cannot accrue weeks it never held.
+    function settleTransfer(
+        address from,
+        address to
+    ) external nonReentrant {
+        if (msg.sender != address(nft)) revert NotNft();
+        _settleInterest(from);
+        _settleInterest(to);
     }
 
     function freezeImport() external onlyOwner {
@@ -406,14 +392,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         emit DirectReferralBpsUpdated(bps);
     }
 
-    /// @notice Kept so existing admin calls still succeed. Direct rewards ignore this value.
-    function setMinReferralAmount(
-        uint256 amount
-    ) external onlyOwner {
-        minReferralAmount = amount;
-        emit MinReferralAmountUpdated(amount);
-    }
-
     function setMinIdo(
         uint256 amount
     ) external onlyOwner {
@@ -469,12 +447,19 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         emit RewardsProposalCancelled(next);
     }
 
-    /// @notice One-time link to the NFT interest contract.
+    /// @notice Link an interest contract. A later call freezes the previous one at this week.
+    ///         Finished weeks stay claimable there. This contract starts from the same week.
     function setNftInterest(
         address interest_
-    ) external onlyOwner {
-        if (nftInterest != address(0)) revert InterestAlreadySet();
+    ) external onlyOwner nonReentrant {
         if (interest_ == address(0)) revert ZeroAddress();
+        uint256 n = nftInterests.length;
+        for (uint256 i = 0; i < n; i++) {
+            if (nftInterests[i] == interest_) revert InterestAlreadySet();
+        }
+        if (n == MAX_NFT_INTERESTS) revert TooManyInterests();
+        if (n != 0) INemoNftInterest(nftInterests[n - 1]).noteDetached();
+        nftInterests.push(interest_);
         nftInterest = interest_;
         if (saleOpenedAt != 0) INemoNftInterest(interest_).noteSaleOpened();
         if (idoEnded && idoEndedWeek == 0) {
@@ -497,31 +482,6 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         _settleInterest(account);
         nft.mint(account, count);
         emit NftGranted(account, count);
-    }
-
-    function setNemoSchedule(
-        uint256 baseTokensPer100_,
-        uint256 weeklyDecayAbs_,
-        uint256 weekDuration_,
-        uint256 minTokensPer100_
-    ) external onlyOwner {
-        if (baseTokensPer100_ == 0 || weekDuration_ == 0) revert InvalidSchedule();
-        if (minTokensPer100_ > baseTokensPer100_) revert InvalidSchedule();
-        baseTokensPer100 = baseTokensPer100_;
-        weeklyDecayAbs = weeklyDecayAbs_;
-        weekDuration = weekDuration_;
-        minTokensPer100 = minTokensPer100_;
-        emit NemoScheduleUpdated(baseTokensPer100_, weeklyDecayAbs_, weekDuration_, minTokensPer100_);
-    }
-
-    function setNemoBonus(
-        uint256 threshold,
-        uint256 bps
-    ) external onlyOwner {
-        if (threshold == 0 || bps > BPS_DENOMINATOR) revert InvalidSchedule();
-        nemoBonusThreshold = threshold;
-        nemoBonusBps = bps;
-        emit NemoBonusUpdated(threshold, bps);
     }
 
     function setTokensPerUsdt(
@@ -571,7 +531,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
         for (uint256 i = 0; i < n; i++) {
             address account = wallets[i];
             if (!accounts[account].registered) revert NotRegistered();
+            uint256 prevSelf = accounts[account].selfVolume;
             accounts[account].selfVolume = selfVolumes[i];
+            totalImported = totalImported - prevSelf + selfVolumes[i];
             uint256 nfts = _nftsOwed(selfVolumes[i]);
             uint256 prev = importedNfts[account];
             if (grantedNfts[account] > nfts) revert GrantExceedsImport();
@@ -675,8 +637,9 @@ contract NemoIdo is Ownable2Step, Pausable, ReentrancyGuard, INemoVaultPay {
     function _settleInterest(
         address account
     ) internal {
-        if (nftInterest != address(0)) {
-            INemoNftInterest(nftInterest).settle(account);
+        uint256 n = nftInterests.length;
+        for (uint256 i = 0; i < n; i++) {
+            INemoNftInterest(nftInterests[i]).settle(account);
         }
     }
 

@@ -130,7 +130,7 @@ IDO_ADDRESS=0x... RPC_URL=... TEST_PRIVATE_KEY=0x... \
 
 [SECURITY-AUDIT.md](SECURITY-AUDIT.md) 审查的是已经删掉的链上团队模块，不要把它读成「本版已修复」。主网部署前需要外部审计。
 
-历史第一期笔记：[docs/SECURITY.md](docs/SECURITY.md)（口径已过时）。
+历史第一期笔记在本地知识库 `source/notes/nemoido-mainnet-2026-10-06/SECURITY.md`（口径已过时）。
 
 ---
 

@@ -42,8 +42,8 @@ const OWNABLE_ABI = parseAbi([
   "function pendingOwner() view returns (address)",
   "function transferOwnership(address newOwner)",
   "function acceptOwnership()",
-  "function minReferralAmount() view returns (uint256)",
-  "function setMinReferralAmount(uint256 amount)",
+  "function minIdo() view returns (uint256)",
+  "function setMinIdo(uint256 amount)",
 ]);
 
 const CONTRACTS = [
@@ -181,9 +181,9 @@ async function main() {
     const ido = getAddress(env.BSC_TESTNET_IDO);
     const owner = getAddress(await publicClient.readContract({ address: ido, abi: OWNABLE_ABI, functionName: "owner" }));
     if (owner !== multisig) throw new Error("金库 Owner 还不是多签。先完成 accept");
-    const current = await publicClient.readContract({ address: ido, abi: OWNABLE_ABI, functionName: "minReferralAmount" });
-    const data = encodeFunctionData({ abi: OWNABLE_ABI, functionName: "setMinReferralAmount", args: [current] });
-    console.log(`把最低推荐额设成当前值 ${current}，只验证 Owner 权限，不改变规则。`);
+    const current = await publicClient.readContract({ address: ido, abi: OWNABLE_ABI, functionName: "minIdo" });
+    const data = encodeFunctionData({ abi: OWNABLE_ABI, functionName: "setMinIdo", args: [current] });
+    console.log(`把最低入金设成当前值 ${current}，只验证 Owner 权限，不改变规则。`);
     await execMultisig({ publicClient, walletClient, multisig, signers, target: ido, data, apply, rows });
     if (!apply) console.log("dry-run。确认后：node scripts/multisig-testnet.mjs exec --apply");
     return;

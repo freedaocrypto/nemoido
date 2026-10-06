@@ -85,6 +85,17 @@ contract NemoRewardsTest is NemoIdoBase {
         rewards.claim(10 * UNIT, new bytes32[](0));
     }
 
+    function test_historicalBudgetAllowsRootBeforeNewDeposits() public {
+        vm.prank(owner);
+        rewards.setHistoricalTeamBudget(70 * UNIT);
+        _publish(_leaf(alice, 70 * UNIT), 70 * UNIT);
+        assertEq(rewards.committed(), 70 * UNIT);
+
+        vm.prank(publisher);
+        vm.expectRevert(NemoRewards.CapExceeded.selector);
+        rewards.publishRoot(_leaf(alice, 71 * UNIT), bytes32("h"), 71 * UNIT, "");
+    }
+
     function test_rootAboveGlobalCapReverts() public {
         _register(alice, "ALICE001", "");
         _contribute(alice, 1000 * UNIT);

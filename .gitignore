@@ -17,6 +17,8 @@ roots/
 # Node import/export scripts
 node_modules/
 import-data.json
+import-interest-backfill.json
+historical-team-rewards.json
 slither-report.json
 crytic-export/
 
@@ -24,3 +26,9 @@ crytic-export/
 .env
 .env.*
 !.env.example
+
+# Explicit mainnet configuration and full database backups
+.env.mainnet
+.env.mainnet.*
+!.env.mainnet.example
+*.dump

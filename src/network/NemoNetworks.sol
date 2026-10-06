@@ -10,7 +10,6 @@ library NemoNetworks {
         uint256 nftCap;
         uint256 directReferralBps;
         uint256 minIdo;
-        uint256 minReferralAmount;
         uint256 tokensPerUsdt;
         uint256 weekDuration;
         bool weekByBlock;
@@ -51,7 +50,6 @@ library NemoNetworks {
         p.nftCap = 10_000;
         p.directReferralBps = 1000;
         p.minIdo = 1e18;
-        p.minReferralAmount = 100e18;
         p.tokensPerUsdt = 100e18;
         p.ambassadorMin = 100e18;
         p.partnerMin = 1000e18;

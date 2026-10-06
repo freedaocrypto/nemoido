@@ -6,6 +6,7 @@ import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20
 interface INemoVaultPay {
     function usdt() external view returns (IERC20);
     function totalContributed() external view returns (uint256);
+    function totalImported() external view returns (uint256);
     function totalDirectAccrued() external view returns (uint256);
     function disburse(address to, uint256 amount) external;
 }

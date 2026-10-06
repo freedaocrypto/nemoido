@@ -19,7 +19,9 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
     uint256 public constant CAP = 1_000_000_000e18;
 
     address public minter;
+    /// @notice Latest interest contract. Earlier ones stay in `interestMinters` so users can still claim.
     address public interestMinter;
+    mapping(address => bool) public interestMinters;
     mapping(address => bool) public transferAllowlist;
     /// @notice When true, any holder can transfer. When false, only the allowlist rule applies.
     bool public transfersEnabled;
@@ -49,11 +51,13 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         emit MinterUpdated(minter_);
     }
 
+    /// @notice Authorize an interest contract to mint yield. Does not revoke an earlier one.
     function setInterestMinter(
         address interestMinter_
     ) external onlyOwner {
         if (interestMinter_ == address(0)) revert ZeroAddress();
         interestMinter = interestMinter_;
+        interestMinters[interestMinter_] = true;
         emit InterestMinterUpdated(interestMinter_);
     }
 
@@ -79,7 +83,7 @@ contract NemoToken is ERC20, ERC20Pausable, Ownable2Step {
         address to,
         uint256 amount
     ) external {
-        if (msg.sender != minter && msg.sender != interestMinter && msg.sender != owner()) revert NotAuthorized();
+        if (msg.sender != minter && !interestMinters[msg.sender] && msg.sender != owner()) revert NotAuthorized();
         if (to == address(0)) revert ZeroAddress();
         if (totalSupply() + amount > CAP) revert CapExceeded();
         _mint(to, amount);

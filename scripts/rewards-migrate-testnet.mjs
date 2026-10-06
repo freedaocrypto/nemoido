@@ -104,7 +104,6 @@ async function main() {
         nftCap: 10_000n,
         directReferralBps: 1_000n,
         minIdo: 10n ** 18n,
-        minReferralAmount: 100n * 10n ** 18n,
         tokensPerUsdt: 100n * 10n ** 18n,
         weekDuration: 3_600n,
         weekByBlock: false,

@@ -103,9 +103,9 @@ npm run reset:testnet-db -- --apply
 
 ## 6. 导入前面那 30 个地址
 
-来源是 FreeDao 生产库，经 `scripts/import-prod-to-testnet.mjs` 导出再上链。只写邀请码、上级和本人业绩，不铸 NEMOKEY、不铸 NFT、不发直推。导入业绩算本人累计，所以导入满 100 USDT 的地址，之后下级再入金时可以拿直推和网体奖；导入本身不发这些奖，也不进上级伞下。不满 1000 USDT 不占 NFT 额度。满 1000 USDT 按累计业绩除以 500 占用额度，仍然不铸造。
+来源是 FreeDao 生产库，经 `scripts/import-prod-to-testnet.mjs` 导出再上链。只写邀请码、上级和本人业绩，不铸 NEMOKEY、不铸 NFT、不发直推。各地址本人业绩会加总记入 `totalImported`。这次历史入金是 4900 USDT，奖励上限按它的 25% 算，是 1225 USDT。这笔不代表金库里有 4900 USDT。索引扫到这笔导入时，会把本人业绩加进所有上级的伞下，但不发网体奖。历史网体奖按确认入金的先后另算，见第 12 节。不满 1000 USDT 不占 NFT 额度。满 1000 USDT 按累计业绩除以 500 占用额度，仍然不铸造。
 
-`docs/bsc-testnet-deposits.csv` 是旧合约上的测试入金，不要导入。
+`docs/bsc-testnet-deposits.csv` 是旧合约上的测试入金，不要导入。导入这一步仍不铸 NEMOKEY、不铸 NFT、不发直推。开售之后用 `npm run settle:imported` 按规则补发，见第 9 节。
 
 ```bash
 npm run import:testnet
@@ -138,7 +138,37 @@ npm run import:testnet -- --open
 
 核对 `importFrozen() == true`，`saleOpen() == true`。
 
-## 9. 给测试钱包补铸现有 MockUSDT
+## 9. 按规则补发历史 NEMOKEY、NFT，并结算周息
+
+开售完成后再跑。只处理 `import-data.json` 里已经导入的地址，金额以链上本人业绩为准。
+
+| 补发 | 规则 |
+|------|------|
+| NEMOKEY | 本人业绩 × 每 USDT 100 枚，减去该地址已经持有的数量。由币的控制人铸造，不从客户钱包拉 USDT，不记直推和网体，不计入金库的入金铸币合计 |
+| NFT | 业绩满 1000 USDT 起，每 500 USDT 一张，只补导入时占下、还没补发的张数。1000 USDT 是 2 张，1500 USDT 是 3 张 |
+| 周息 | 按每笔已确认入金的时间，把开售之前已经结束的北京时间自然周直接铸成 NEMOKEY。张数随业绩增加：满 1000 USDT 是 2 张、每周按本金 1%，之后每满 500 USDT 加一张，加张之前的周不按新张数重算。单人不超过这些 NFT 本金的 100%，全体不超过 5000 万枚。开售当周及之后不在这里补，由周息合约按补发后的 NFT 计算。没有 NFT 的地址是 0 |
+| 直推 | 不补。过去的直推已经手动发过一部分，还没发的以后继续手动发。不要写进这个脚本，否则会和已经发出的重复 |
+| 网体 | 不在这一步发奖。索引会把导入的本人业绩计入上级伞下。历史网体奖在第 12 节清算后放进默克尔 root |
+
+先预览。每个有 NFT 的地址会打印以前的确认时间、今天、过去的周数、应该补的周息和实际补的周息。实际数小于应该补的数时，是碰到了单人或总上限。确认后再执行：
+
+```bash
+npm run settle:imported
+npm run settle:imported -- --apply
+```
+
+重复执行会跳过已经补过的 NEMOKEY、NFT 和周息。周息的已补金额写在 `import-interest-backfill.json`，不要删。控制人必须仍是 `.env` 里的 `TEST_PRIVATE_KEY`。交给多签之后不要再跑这一步。导入文件里如果还没有每笔确认时间，脚本会从来源库补读。
+
+主网沿用同一脚本，等主网地址写进 `.env` 之后：
+
+```bash
+npm run settle:imported -- --network mainnet
+npm run settle:imported -- --network mainnet --apply
+```
+
+主网读 `BSC_MAINNET_RPC`、`BSC_MAINNET_IDO`、`BSC_MAINNET_NEMOKEY` 和 `MAINNET_PRIVATE_KEY`。同样要在开售之后、交给多签之前。
+
+## 10. 给测试钱包补铸现有 MockUSDT
 
 币仍是 `0x9E674AfE8C7c31DB30d4E2B93b524fe4302f0D57`。钱包里已经有的余额留在这份合约上。脚本读取 `/Users/jack/Documents/Sensitive/nemo-bsc-testnet-wallets.json` 里的地址，不使用里面的私钥。每个地址再铸 100,000 USDT。Gas 由 `.env` 的 `TEST_PRIVATE_KEY` 支付，收款地址自己不用出 gas。部署账户必须仍是这份 MockUSDT 的 owner。
 
@@ -156,7 +186,7 @@ npm run mint:test-usdt -- --apply
 
 每笔铸币会核对成功回执、目标代币及余额增加100,000；最后输出每个账户余额。若核对中途失败，先检查已成功地址，不要盲目整批重跑。这些地址以后自己入金时，钱包里还要有测试网 BNB。
 
-## 10. 把公开地址上传到 Vercel Preview
+## 11. 把公开地址上传到 Vercel Preview
 
 只写 Preview。不上传私钥、数据库连接串、`CRON_SECRET`，也不改 Production。脚本从 `.env` 的 `BSC_TESTNET_*` 生成这些值：
 
@@ -186,9 +216,9 @@ Preview 上的 `DATABASE_URL` 必须仍是测试库 `ep-empty-king`。这个脚�
 
 网体索引不要挂在 Preview 上。Vercel 定时任务只对 Production 生效。主网上线时再把 `GET /api/cron/index-rewards` 写进 `vercel.json`，频率用每小时。
 
-## 11. 本地索引，再用币安钱包测
+## 12. 本地索引，再用币安钱包测
 
-登录地址必须等于钱包当前账户。开售后用现有 MockUSDT 入金。旧金库上的 NEMOKEY、NFT 和直推不会出现；USDT 余额仍在原来那份币上。
+登录地址必须等于钱包当前账户。开售后用现有 MockUSDT 入金。历史地址的 NEMOKEY、NFT 和开售前的周息要等第 9 节补发之后才出现。历史直推不补：已经手动发过一部分，没发的以后手动发。USDT 余额仍在原来那份币上。
 
 入金后按这个口径核对，不要用旧规则：
 
@@ -196,11 +226,15 @@ Preview 上的 `DATABASE_URL` 必须仍是测试库 `ep-empty-king`。这个脚�
 - NFT 要本人累计满 1000 USDT 才有。1000 USDT 是 2 张，1500 USDT 是 3 张。只入 500 USDT 可以有网体 3% 资格，NFT 是 0，因此没有周息。
 - 最低入金仍是 1 USDT。不再要求下级这一笔必须满 100 USDT。
 
-网体业绩在本地跑，从 `START_BLOCK` 往后扫当前 `IDO_ADDRESS`：
+网体业绩在本地跑，从 `START_BLOCK` 往后扫当前 `IDO_ADDRESS`。导入业绩会计入上级伞下，历史网体奖要再跑一次清算：
 
 ```bash
 CHUNK_BLOCKS=50000 npm run index:rewards
+npm run settle:historical-team
+npm run settle:historical-team -- --apply
 ```
+
+清算按每笔已确认入金的时间顺序重算差额。直推不进这张表。奖励上限包含导入的历史入金：4900 USDT 的 25% 是 1225 USDT，够覆盖这次 159 USDT 的历史网体奖。领取前仍要把这 159 USDT 打进金库。当前已部署的金库还没有 `totalImported`，要重新部署并导入后，发布脚本才会按这个上限放行。
 
 页面上的「待结算」要等这次索引写完才有数。领取还要另一次发布。npm 命令自动读取仓库 `.env`，配置优先于终端遗留值。发布子进程只保留 `PUBLISHER_PRIVATE_KEY`，自动移除其他私钥，不用另开终端或source：
 
@@ -229,6 +263,8 @@ npm run import:testnet -- --apply
 npm run publisher:testnet
 npm run publisher:testnet -- --apply
 npm run import:testnet -- --open
+npm run settle:imported
+npm run settle:imported -- --apply
 npm run mint:test-usdt
 npm run mint:test-usdt -- --apply
 npm run vercel:testnet-preview
@@ -239,13 +275,15 @@ npm run vercel:testnet-preview -- --apply
 
 ```bash
 CHUNK_BLOCKS=50000 npm run index:rewards
+npm run settle:historical-team
+npm run settle:historical-team -- --apply
 npm run publish:root
 npm run publish:root -- --apply
 ```
 
 root明细核对请使用 `npm run verify:root -- <发布输出的明细文件>`。导入预览必须确认30条符合当前生产库；数量变化时不要盲目套用历史30条。全程不调用 `scale-network.sh` 或 `endIdo`。
 
-## 12. 多签接管，再换奖励合约
+## 13. 多签接管，再换奖励合约
 
 先完成上面的开售，并用非多签地址做一轮入金、索引、发布，至少领一笔网体奖。记下该地址的 `claimed` 和当时的 `totalTeamPaid`。
 
@@ -295,3 +333,8 @@ npm run verify:root -- <发布输出的明细文件>
 - 第一轮领过的地址，用旧累计额再领，合约拒绝。
 - 切换之后的新入金按新三档计算，第一轮的网体奖数额不变。
 - 直推仍在金库上，不受这次更换影响。
+
+
+## 2026-10-06 主网上线指引
+
+本文的reset、MockUSDT铸币、测试钱包映射和Preview上传不能照搬主网。主网准备、生产全量备份/恢复、参数复核以及life合并关卡见本地知识库 `source/notes/nemoido-mainnet-2026-10-06/mainnet/launch-checklist-2026-10-06.md`。本次没有广播主网或推送life。

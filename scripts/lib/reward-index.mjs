@@ -1,5 +1,5 @@
 import { getAddress } from "viem";
-import { bind, contribute, createState, seedSelf, tiersForBlock } from "./team-reward.mjs";
+import { bind, contribute, createState, noteImportedSelf, tiersForBlock } from "./team-reward.mjs";
 
 function addr(value) {
   if (!value || value === "0x0000000000000000000000000000000000000000") return null;
@@ -12,7 +12,8 @@ function key(account) {
 
 /**
  * Replay one decoded vault/rewards log into calculator state.
- * Import volumes are stored as self only. Team rewards start on later deposits.
+ * Import volumes set self and add that amount to every ancestor's umbrella.
+ * They do not pay direct or team rewards. Rewards start on later deposits.
  * `claimed` is filled from TeamClaimed and is not part of the calculator.
  */
 export function applyLog(state, log) {
@@ -31,7 +32,7 @@ export function applyLog(state, log) {
   if (name === "VolumeImported") {
     const account = key(log.args.account);
     if (!state.referrer.has(account)) bind(state, account, null);
-    seedSelf(state, account, log.args.selfVolume);
+    noteImportedSelf(state, account, log.args.selfVolume);
     return;
   }
   if (name === "Contributed") {

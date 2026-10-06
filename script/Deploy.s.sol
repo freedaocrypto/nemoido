@@ -32,6 +32,8 @@ contract Deploy is Script {
         else if (mainnet) params = NemoNetworks.bscMainnet();
         else revert("NETWORK must be local, bscTestnet, or bscMainnet");
 
+        require(block.chainid == params.chainId, "RPC chain does not match NETWORK");
+
         uint256 pk;
         if (kind == keccak256("local")) {
             pk = vm.envOr("LOCAL_PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));

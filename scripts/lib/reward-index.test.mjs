@@ -23,6 +23,23 @@ test("imported self does not pay team until a later deposit", () => {
   assert.equal(after[A].teamWei, 1_000n * UNIT);
 });
 
+test("imported downline volume raises the upline umbrella without paying historical rewards", () => {
+  const state = emptyIndexState();
+  applyLog(state, { eventName: "UserImported", args: { account: A } });
+  applyLog(state, { eventName: "UserImported", args: { account: B } });
+  applyLog(state, { eventName: "ReferrerImported", args: { account: B, referrer: A } });
+  applyLog(state, { eventName: "VolumeImported", args: { account: A, selfVolume: 100n * UNIT } });
+  applyLog(state, { eventName: "VolumeImported", args: { account: B, selfVolume: 10_000n * UNIT } });
+  const seeded = Object.fromEntries(accountRows(state).map((row) => [row.wallet, row]));
+  assert.equal(seeded[A].teamWei, 10_000n * UNIT);
+  assert.equal(seeded[A].teamRewardWei, 0n);
+
+  applyLog(state, { eventName: "Contributed", args: { account: B, amount: 1_000n * UNIT } });
+  const after = Object.fromEntries(accountRows(state).map((row) => [row.wallet, row]));
+  assert.equal(after[A].teamWei, 11_000n * UNIT);
+  assert.equal(after[A].teamRewardWei, 70n * UNIT);
+});
+
 test("planChunk starts at START_BLOCK and stops at the safe head", () => {
   assert.deepEqual(planChunk({ lastBlock: null, startBlock: 100n, safeHead: 250n, chunkBlocks: 2000n }), {
     from: 100n,

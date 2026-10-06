@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS nemo_team_account (
   self_wei text NOT NULL DEFAULT '0',
   team_wei text NOT NULL DEFAULT '0',
   team_reward_wei text NOT NULL DEFAULT '0',
+  historical_team_reward_wei text NOT NULL DEFAULT '0',
   direct_wei text NOT NULL DEFAULT '0',
   claimed_wei text NOT NULL DEFAULT '0',
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -93,6 +94,11 @@ export async function ensureSchema(client) {
   await client.query(SCHEMA_SQL);
   for (const [table, cols] of Object.entries(SCOPED_KEYS)) {
     await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ido_address text NOT NULL DEFAULT ''`);
+    if (table === "nemo_team_account") {
+      await client.query(
+        `ALTER TABLE nemo_team_account ADD COLUMN IF NOT EXISTS historical_team_reward_wei text NOT NULL DEFAULT '0'`,
+      );
+    }
     const { rows } = await client.query(
       `SELECT a.attname
        FROM pg_index i
@@ -136,7 +142,7 @@ export function stateFromRows(rows) {
 
 export async function loadAccounts(client, chainId, idoAddress) {
   const { rows } = await client.query(
-    `SELECT wallet, referrer, self_wei, team_wei, team_reward_wei, direct_wei, claimed_wei
+    `SELECT wallet, referrer, self_wei, team_wei, team_reward_wei, historical_team_reward_wei, direct_wei, claimed_wei
      FROM nemo_team_account WHERE chain_id = $1 AND ido_address = $2`,
     [chainId, idoAddress],
   );

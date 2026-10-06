@@ -19,9 +19,11 @@ const rewardsAbi = parseAbi([
   "function publisher() view returns (address)",
   "function merkleRoot() view returns (bytes32)",
   "function totalTeamPaid() view returns (uint256)",
+  "function historicalTeamBudget() view returns (uint256)",
 ]);
 const vaultAbi = parseAbi([
   "function totalContributed() view returns (uint256)",
+  "function totalImported() view returns (uint256)",
   "function totalDirectAccrued() view returns (uint256)",
   "function rewards() view returns (address)",
 ]);
@@ -60,7 +62,10 @@ try {
   const ido = getAddress(process.env.IDO_ADDRESS);
   const rows = await loadAccounts(client, chainId, ido);
   const entries = rows
-    .map((row) => ({ account: getAddress(row.wallet), cumulative: BigInt(row.team_reward_wei) }))
+    .map((row) => ({
+      account: getAddress(row.wallet),
+      cumulative: BigInt(row.team_reward_wei || 0) + BigInt(row.historical_team_reward_wei || 0),
+    }))
     .filter((row) => row.cumulative > 0n)
     .sort((a, b) => a.account.toLowerCase().localeCompare(b.account.toLowerCase()));
   if (entries.length === 0) explain("库里还没有可发放的网体奖。先跑 scripts/index-rewards.mjs。");
@@ -106,7 +111,7 @@ try {
   const publicClient = createPublicClient({ chain, transport });
   const account = privateKeyToAccount(process.env.PUBLISHER_PRIVATE_KEY);
   const wallet = createWalletClient({ account, chain, transport });
-  const [contributed, direct, alreadyPaid] = await Promise.all([
+  const [contributed, imported, direct, alreadyPaid, budget] = await Promise.all([
     publicClient.readContract({
       address: getAddress(process.env.IDO_ADDRESS),
       abi: vaultAbi,
@@ -115,15 +120,24 @@ try {
     publicClient.readContract({
       address: getAddress(process.env.IDO_ADDRESS),
       abi: vaultAbi,
+      functionName: "totalImported",
+    }).catch(() => {
+      throw new Error("当前金库没有记下历史入金总额。重新部署并导入后，totalImported 才会等于各地址本人业绩之和。");
+    }),
+    publicClient.readContract({
+      address: getAddress(process.env.IDO_ADDRESS),
+      abi: vaultAbi,
       functionName: "totalDirectAccrued",
     }),
     publicClient.readContract({ address: rewards, abi: rewardsAbi, functionName: "totalTeamPaid" }),
+    publicClient.readContract({ address: rewards, abi: rewardsAbi, functionName: "historicalTeamBudget" }),
   ]);
   if (teamSum < alreadyPaid) {
     throw new Error(`累计 ${teamSum} 小于链上已支付 ${alreadyPaid}`);
   }
-  if (direct + teamSum > (contributed * 2500n) / 10_000n) {
-    throw new Error("直推 + 网体累计超过 25% 帽");
+  const cap = ((contributed + imported) * 2500n) / 10_000n + budget;
+  if (direct + teamSum > cap) {
+    throw new Error(`直推 + 网体累计超过 25% 帽：合计 ${direct + teamSum}，上限 ${cap}`);
   }
   const onchainPublisher = await publicClient.readContract({
     address: rewards,

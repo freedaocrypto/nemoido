@@ -25,6 +25,8 @@
     "treasury:withdraw": "node scripts/withdraw-treasury-testnet.mjs",
     "allowlist:testnet": "node scripts/allowlist-testnet.mjs",
     "mint:nemokey": "node scripts/mint-nemokey-testnet.mjs",
+    "settle:imported": "node scripts/settle-imported.mjs",
+    "settle:historical-team": "node scripts/settle-historical-team.mjs",
     "rewards:migrate": "node scripts/rewards-migrate-testnet.mjs"
   },
   "dependencies": {

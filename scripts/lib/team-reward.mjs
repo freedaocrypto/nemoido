@@ -55,9 +55,29 @@ export function bind(state, account, referrer) {
   state.referrer.set(account, referrer || null);
 }
 
-/** Historical self volume. Does not pay direct or team rewards and does not bump uplines. */
+/** Historical self volume only. Does not pay rewards and does not change uplines. */
 export function seedSelf(state, account, amount) {
   state.self.set(account, BigInt(amount));
+}
+
+/**
+ * Imported self volume counts toward every ancestor's umbrella.
+ * The absolute value is the account's imported total. A later correction applies only the delta.
+ * This does not pay direct or team rewards for the imported amount.
+ */
+export function noteImportedSelf(state, account, absoluteSelf) {
+  const next = BigInt(absoluteSelf);
+  const prev = get(state.self, account);
+  state.self.set(account, next);
+  const delta = next - prev;
+  if (delta === 0n) return;
+  let cursor = state.referrer.get(account) || null;
+  while (cursor) {
+    const team = get(state.team, cursor) + delta;
+    if (team < 0n) throw new Error(`${cursor} 的伞下业绩不能为负`);
+    state.team.set(cursor, team);
+    cursor = state.referrer.get(cursor) || null;
+  }
 }
 
 /**

@@ -23,6 +23,9 @@ contract NemoRewards is Ownable2Step, ReentrancyGuard {
     address public publisher;
     /// @notice Max increase of `committed` in one publish. Zero means no extra limit.
     uint256 public maxRootIncrease;
+    /// @notice Room reserved for the one-time historical team settlement.
+    ///         It is not 25% of imported volume. Set it to the settled leaf sum.
+    uint256 public historicalTeamBudget;
 
     bytes32 public merkleRoot;
     bytes32 public contentHash;
@@ -35,6 +38,7 @@ contract NemoRewards is Ownable2Step, ReentrancyGuard {
 
     event PublisherUpdated(address indexed publisher);
     event MaxRootIncreaseUpdated(uint256 amount);
+    event HistoricalTeamBudgetUpdated(uint256 amount);
     event RootPublished(bytes32 indexed root, bytes32 contentHash, uint256 cumulative, string uri);
     event TeamClaimed(address indexed account, uint256 cumulative, uint256 paid);
 
@@ -46,6 +50,7 @@ contract NemoRewards is Ownable2Step, ReentrancyGuard {
     error InvalidProof();
     error CapExceeded();
     error IncreaseTooLarge();
+    error ExceedsCommitted();
 
     constructor(
         address vault_,
@@ -64,7 +69,19 @@ contract NemoRewards is Ownable2Step, ReentrancyGuard {
     }
 
     function rewardCap() public view returns (uint256) {
-        return (vault.totalContributed() * REWARD_CAP_BPS) / BPS_DENOMINATOR;
+        return ((vault.totalContributed() + vault.totalImported()) * REWARD_CAP_BPS) / BPS_DENOMINATOR
+            + historicalTeamBudget;
+    }
+
+    /// @notice Allow the historical team root to be published before new deposits exist.
+    ///         Fund the vault with this much USDT before holders claim. Do not lower it
+    ///         below an already published cumulative.
+    function setHistoricalTeamBudget(
+        uint256 amount
+    ) external onlyOwner {
+        if (amount < committed) revert CumulativeTooLow();
+        historicalTeamBudget = amount;
+        emit HistoricalTeamBudgetUpdated(amount);
     }
 
     function setPublisher(
@@ -110,6 +127,9 @@ contract NemoRewards is Ownable2Step, ReentrancyGuard {
         if (cumulative < already) revert CumulativeTooLow();
         uint256 pay = cumulative - already;
         if (pay == 0) revert NothingToClaim();
+        // Leaves must stay inside the declared total. Without this, a malicious root can
+        // declare a tiny `cumulative` (passing maxRootIncrease) while its leaves drain the cap.
+        if (totalTeamPaid + pay > committed) revert ExceedsCommitted();
         if (vault.totalDirectAccrued() + totalTeamPaid + pay > rewardCap()) revert CapExceeded();
         claimed[msg.sender] = cumulative;
         totalTeamPaid += pay;

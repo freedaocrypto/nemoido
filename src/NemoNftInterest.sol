@@ -33,6 +33,9 @@ contract NemoNftInterest is Ownable2Step, ReentrancyGuard {
     bool public immutable calendarWeeks;
     uint256 public startWeek;
     bool public saleOpened;
+    /// @notice Set when the vault links a replacement. Accrual stops at `stopWeek`.
+    bool public detached;
+    uint256 public stopWeek;
     /// @notice 5% of the 1e9 nemokey cap. Owner can lower it.
     uint256 public interestCap = 50_000_000e18;
     /// @notice Per-account cap as bps of that account's NFT principal. 10000 = 100%.
@@ -82,7 +85,21 @@ contract NemoNftInterest is Ownable2Step, ReentrancyGuard {
         if (msg.sender != address(vault)) revert NotVault();
         if (saleOpened) return;
         saleOpened = true;
-        startWeek = _week(block.timestamp);
+        uint256 week = _week(block.timestamp);
+        if (vault.idoEnded()) {
+            uint256 ended = vault.idoEndedWeek();
+            if (ended > week) week = ended;
+        }
+        startWeek = week;
+    }
+
+    /// @notice Freeze accrual at the current cutoff. The replacement contract starts at the same week.
+    function noteDetached() external {
+        if (msg.sender != address(vault)) revert NotVault();
+        if (detached) return;
+        uint256 week = _endExclusive();
+        detached = true;
+        stopWeek = week;
     }
 
     function setInterestCap(
@@ -225,6 +242,7 @@ contract NemoNftInterest is Ownable2Step, ReentrancyGuard {
     }
 
     function _endExclusive() internal view returns (uint256) {
+        if (detached) return stopWeek;
         if (vault.idoEnded()) return vault.idoEndedWeek();
         return _week(block.timestamp);
     }

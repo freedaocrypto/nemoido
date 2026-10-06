@@ -195,6 +195,96 @@ contract NemoNftInterestTest is NemoIdoBase {
         ido.setNftInterest(address(interest));
     }
 
+    function test_replacementStartsAtTheCutWeek() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1_000 * UNIT);
+        _advanceWeeks(1);
+
+        NemoNftInterest next = _switchInterest();
+        assertTrue(interest.detached());
+        assertEq(interest.stopWeek(), ido.currentWeek());
+        assertEq(next.startWeek(), interest.stopWeek());
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+        assertEq(next.pending(alice), 0);
+
+        _advanceWeeks(1);
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+        assertEq(next.pending(alice), 1_000 * UNIT);
+
+        vm.prank(alice);
+        interest.claim();
+        vm.prank(alice);
+        next.claim();
+        assertEq(nemo.balanceOf(alice), 102_000 * UNIT);
+    }
+
+    function test_laterMintDoesNotRepriceDetachedWeeks() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1_000 * UNIT);
+        _advanceWeeks(1);
+        NemoNftInterest next = _switchInterest();
+
+        _contribute(alice, 4_000 * UNIT);
+        assertEq(nft.balanceOf(alice), 10);
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+
+        _advanceWeeks(1);
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+        assertEq(next.pending(alice), 10_000 * UNIT);
+    }
+
+    function test_secondReplacementStillSettlesTheFirst() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1_000 * UNIT);
+        _advanceWeeks(1);
+        NemoNftInterest second = _switchInterest();
+        _advanceWeeks(1);
+        NemoNftInterest third = _switchInterest();
+
+        _contribute(alice, 4_000 * UNIT);
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+        assertEq(second.pending(alice), 1_000 * UNIT);
+
+        _advanceWeeks(1);
+        assertEq(third.pending(alice), 10_000 * UNIT);
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+        assertEq(second.pending(alice), 1_000 * UNIT);
+    }
+
+    function test_swapAfterEndDoesNotOpenAnotherStream() public {
+        _openSale();
+        _register(alice, "ALICE001", "");
+        _contribute(alice, 1_000 * UNIT);
+        vm.prank(owner);
+        ido.endIdo();
+
+        NemoNftInterest next = _switchInterest();
+        _advanceWeeks(3);
+        assertEq(interest.pending(alice), 1_000 * UNIT);
+        assertEq(next.pending(alice), 0);
+    }
+
+    function test_ninthInterestReverts() public {
+        for (uint256 i = 0; i < 7; i++) {
+            _switchInterest();
+        }
+        NemoNftInterest ninth = new NemoNftInterest(address(ido), owner);
+        vm.prank(owner);
+        vm.expectRevert(NemoIdo.TooManyInterests.selector);
+        ido.setNftInterest(address(ninth));
+    }
+
+    function _switchInterest() internal returns (NemoNftInterest next) {
+        next = new NemoNftInterest(address(ido), owner);
+        vm.startPrank(owner);
+        nemo.setInterestMinter(address(next));
+        ido.setNftInterest(address(next));
+        vm.stopPrank();
+    }
+
     function _advanceWeeks(
         uint256 count
     ) internal {
