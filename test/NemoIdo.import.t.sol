@@ -3,6 +3,8 @@ pragma solidity ^0.8.28;
 
 import {NemoIdoBase} from "./helpers/NemoIdoBase.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
+import {NemoRewards} from "../src/NemoRewards.sol";
+import {NemoNetworks} from "../src/network/NemoNetworks.sol";
 
 contract NemoIdoImportTest is NemoIdoBase {
     function test_importDoesNotAccrueRewards() public {
@@ -23,14 +25,11 @@ contract NemoIdoImportTest is NemoIdoBase {
 
         address[] memory volW = new address[](2);
         uint256[] memory selves = new uint256[](2);
-        uint256[] memory teams = new uint256[](2);
         volW[0] = alice;
         volW[1] = bob;
         selves[0] = 1000 * UNIT;
         selves[1] = 5000 * UNIT;
-        teams[0] = 5000 * UNIT;
-        teams[1] = 0;
-        ido.importVolumes(volW, selves, teams);
+        ido.importVolumes(volW, selves);
         ido.freezeImport();
         ido.openSale();
         vm.stopPrank();
@@ -38,13 +37,33 @@ contract NemoIdoImportTest is NemoIdoBase {
         assertEq(ido.pendingOf(alice), 0);
         assertEq(ido.pendingOf(bob), 0);
         assertEq(_self(alice), 1000 * UNIT);
-        assertEq(_team(alice), 5000 * UNIT);
+        assertEq(ido.totalImported(), 6000 * UNIT);
+        assertEq(ido.totalContributed(), 0);
         assertEq(ido.reservedRewards(), 0);
 
         _contribute(bob, 1000 * UNIT);
         assertEq(_direct(alice), 100 * UNIT);
-        assertEq(_teamRewards(alice), 30 * UNIT); // team 6000 → 3%
-        assertEq(_team(alice), 6000 * UNIT);
+        assertEq(ido.totalContributed(), 1000 * UNIT);
+        assertEq(ido.totalImported(), 6000 * UNIT);
+    }
+
+    function test_imported4900RaisesRewardCapTo1225() public {
+        vm.startPrank(owner);
+        address[] memory wallets = new address[](1);
+        bytes32[] memory codes = new bytes32[](1);
+        wallets[0] = alice;
+        codes[0] = _code("ALICE001");
+        ido.importUsers(wallets, codes);
+        uint256[] memory selves = new uint256[](1);
+        selves[0] = 4_900 * UNIT;
+        ido.importVolumes(wallets, selves);
+        NemoRewards rewards = new NemoRewards(address(ido), owner, NemoNetworks.local());
+        ido.setRewards(address(rewards));
+        vm.stopPrank();
+
+        assertEq(ido.totalImported(), 4_900 * UNIT);
+        assertEq(ido.totalContributed(), 0);
+        assertEq(rewards.rewardCap(), 1_225 * UNIT);
     }
 
     function test_importAfterFreezeReverts() public {
@@ -98,7 +117,7 @@ contract NemoIdoImportTest is NemoIdoBase {
         children[1] = alice;
         refs[0] = alice;
         refs[1] = bob;
-        vm.expectRevert(NemoIdo.Cycle.selector);
+        vm.expectRevert(NemoIdo.HasChildren.selector);
         ido.importReferrers(children, refs);
         vm.stopPrank();
     }
@@ -119,11 +138,9 @@ contract NemoIdoImportTest is NemoIdoBase {
         ido.importReferrers(children, refs);
         address[] memory volW = new address[](1);
         uint256[] memory selves = new uint256[](1);
-        uint256[] memory teams = new uint256[](1);
         volW[0] = alice;
         selves[0] = 100 * UNIT;
-        teams[0] = 0;
-        ido.importVolumes(volW, selves, teams);
+        ido.importVolumes(volW, selves);
         ido.freezeImport();
         ido.openSale();
         vm.stopPrank();

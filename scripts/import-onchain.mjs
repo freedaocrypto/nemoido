@@ -2,7 +2,7 @@
 /**
  * Batch-import records from import-data.json into a deployed NemoIdo.
  *
- *   IDO_ADDRESS=0x... RPC_URL=http://127.0.0.1:8545 PRIVATE_KEY=0x... \
+ *   IDO_ADDRESS=0x... RPC_URL=http://127.0.0.1:8545 LOCAL_PRIVATE_KEY=0x... \
  *     node scripts/import-onchain.mjs --in import-data.json
  *   ... node scripts/import-onchain.mjs --apply
  */
@@ -32,7 +32,9 @@ console.log(data.stats);
 
 if (!apply) {
   const maxDepth = data.stats?.maxDepth ?? 0;
-  console.log(`dry-run ok. maxDepth=${maxDepth}. Re-run with --apply to send txs.`);
+  const historicalSelf = records.reduce((sum, row) => sum + BigInt(row.selfWei || 0), 0n);
+  console.log(`dry-run ok. maxDepth=${maxDepth}. historicalSelf=${historicalSelf} wei.`);
+  console.log("Re-run with --apply to send txs.");
   process.exit(0);
 }
 
@@ -41,9 +43,17 @@ const { privateKeyToAccount } = await import("viem/accounts");
 
 const rpc = process.env.RPC_URL || "http://127.0.0.1:8545";
 const ido = process.env.IDO_ADDRESS;
-const pk = process.env.PRIVATE_KEY;
+const expectedChainId = Number(process.env.CHAIN_ID || 31337);
+if (![97, 31337].includes(expectedChainId)) {
+  throw new Error('此导入脚本仅支持本地和测试网；主网导入需先完成全量核对和恢复方案，禁止回落使用 LOCAL_PRIVATE_KEY');
+}
+const pk = process.env.CHAIN_ID === "97" ? process.env.TEST_PRIVATE_KEY : process.env.LOCAL_PRIVATE_KEY;
+if (process.env.PRIVATE_KEY && !pk) {
+  console.error("不要使用 PRIVATE_KEY。本地用 LOCAL_PRIVATE_KEY，测试网用 TEST_PRIVATE_KEY。");
+  process.exit(1);
+}
 if (!ido || !pk) {
-  console.error("Need IDO_ADDRESS and PRIVATE_KEY");
+  console.error("Need IDO_ADDRESS and LOCAL_PRIVATE_KEY（测试网则是 TEST_PRIVATE_KEY）");
   process.exit(1);
 }
 
@@ -58,40 +68,24 @@ const chain = {
 const abi = parseAbi([
   "function importUsers(address[] wallets, bytes32[] codes)",
   "function importReferrers(address[] wallets, address[] referrers)",
-  "function importVolumes(address[] wallets, uint256[] selfVolumes, uint256[] teamVolumes)",
+  "function importVolumes(address[] wallets, uint256[] selfVolumes)",
   "function freezeImport()",
   "function importFrozen() view returns (bool)",
-  "function getAccount(address) view returns ((address referrer, bytes32 inviteCode, uint256 selfVolume, uint256 teamVolume, uint256 directRewards, uint256 teamRewards, uint256 claimed, bool registered))",
+  "function totalImported() view returns (uint256)",
+  "function getAccount(address) view returns ((address referrer, bytes32 inviteCode, uint256 selfVolume, uint256 directRewards, uint256 claimed, bool registered))",
 ]);
 
 const transport = http(rpc);
 const wallet = createWalletClient({ account, chain, transport });
 const publicClient = createPublicClient({ chain, transport });
+if (await publicClient.getChainId() !== expectedChainId) throw new Error('导入 RPC chainId 与 CHAIN_ID 不一致，未发送交易');
 
 function unpackAccount(acc) {
-  if (acc && typeof acc === "object" && acc.selfVolume !== undefined) {
+  if (acc && typeof acc === "object" && acc.selfVolume !== undefined && !Array.isArray(acc)) {
     return acc;
   }
-  const [
-    referrer,
-    inviteCode,
-    selfVolume,
-    teamVolume,
-    directRewards,
-    teamRewards,
-    claimed,
-    registered,
-  ] = Array.isArray(acc) ? acc : [];
-  return {
-    referrer,
-    inviteCode,
-    selfVolume,
-    teamVolume,
-    directRewards,
-    teamRewards,
-    claimed,
-    registered,
-  };
+  const [referrer, inviteCode, selfVolume, directRewards, claimed, registered] = Array.isArray(acc) ? acc : [];
+  return { referrer, inviteCode, selfVolume, directRewards, claimed, registered };
 }
 
 async function send(functionName, args) {
@@ -132,13 +126,9 @@ if (alreadyFrozen) {
     ]);
   }
 
-  const withVol = records.filter((r) => r.selfWei !== "0" || r.teamWei !== "0");
+  const withVol = records.filter((r) => r.selfWei !== "0");
   for (const batch of chunk(withVol, batchSize)) {
-    await send("importVolumes", [
-      batch.map((r) => r.wallet),
-      batch.map((r) => BigInt(r.selfWei)),
-      batch.map((r) => BigInt(r.teamWei)),
-    ]);
+    await send("importVolumes", [batch.map((r) => r.wallet), batch.map((r) => BigInt(r.selfWei))]);
   }
 
   if (process.argv.includes("--freeze")) {
@@ -159,9 +149,18 @@ for (const r of sample) {
   console.log("verify", r.wallet, {
     registered: acc.registered,
     self: acc.selfVolume?.toString?.() ?? String(acc.selfVolume),
-    team: acc.teamVolume?.toString?.() ?? String(acc.teamVolume),
     referrer: acc.referrer,
   });
 }
 
 console.log("import complete");
+const historicalSelf = records.reduce((sum, row) => sum + BigInt(row.selfWei || 0), 0n);
+const importedOnChain = await publicClient.readContract({
+  address: ido,
+  abi,
+  functionName: "totalImported",
+});
+if (importedOnChain !== historicalSelf) {
+  throw new Error(`链上历史入金 ${importedOnChain} 与导入文件 ${historicalSelf} 不一致`);
+}
+console.log(`totalImported=${importedOnChain}`);

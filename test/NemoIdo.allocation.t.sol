@@ -4,64 +4,24 @@ pragma solidity ^0.8.28;
 import {Test} from "../lib/forge-std/src/Test.sol";
 import {NemoIdoBase} from "./helpers/NemoIdoBase.sol";
 import {NemoIdo} from "../src/NemoIdo.sol";
+import {NemoNetworks} from "../src/network/NemoNetworks.sol";
+import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {NemoToken} from "../src/NemoToken.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
 contract NemoAllocationTest is NemoIdoBase {
-    function test_week1_100u_is_10000_nemo() public {
+    function test_weekAdvancesAfterOneDuration() public {
+        _openSale();
+        vm.roll(block.number + 30);
+        assertEq(ido.currentWeek(), 1);
+    }
+
+    function test_contributeMintsPlaceholderNemo() public {
         _openSale();
         _register(alice, "ALICE001", "");
-        uint256 quoted = ido.quote(100 * UNIT);
-        assertEq(quoted, 10_000 * UNIT);
         _contribute(alice, 100 * UNIT);
         assertEq(nemo.balanceOf(alice), 10_000 * UNIT);
         assertEq(ido.totalNemoAllocated(), 10_000 * UNIT);
-    }
-
-    function test_week1_1000u_gets_2pct_bonus() public {
-        _openSale();
-        _register(alice, "ALICE001", "");
-        assertEq(ido.quote(1000 * UNIT), 102_000 * UNIT);
-        _contribute(alice, 1000 * UNIT);
-        assertEq(nemo.balanceOf(alice), 102_000 * UNIT);
-    }
-
-    function test_999u_no_bonus() public {
-        _openSale();
-        _register(alice, "ALICE001", "");
-        assertEq(ido.quote(999 * UNIT), 99_900 * UNIT);
-        _contribute(alice, 999 * UNIT);
-        assertEq(nemo.balanceOf(alice), 99_900 * UNIT);
-    }
-
-    function test_splitDeposits_miss_lump_bonus() public {
-        _openSale();
-        _register(alice, "ALICE001", "");
-        for (uint256 i = 0; i < 10; i++) {
-            _contribute(alice, 100 * UNIT);
-        }
-        assertEq(nemo.balanceOf(alice), 100_000 * UNIT);
-        assertLt(nemo.balanceOf(alice), 102_000 * UNIT);
-    }
-
-    function test_week2_100u_is_9980() public {
-        _openSale();
-        _register(alice, "ALICE001", "");
-        vm.warp(block.timestamp + 7 days);
-        assertEq(ido.currentWeek(), 1);
-        assertEq(ido.tokensPer100(1), 9980 * UNIT);
-        assertEq(ido.quote(100 * UNIT), 9980 * UNIT);
-        _contribute(alice, 100 * UNIT);
-        assertEq(nemo.balanceOf(alice), 9980 * UNIT);
-    }
-
-    function test_quoteMatchesTransfer() public {
-        _openSale();
-        _register(bob, "BOB00001", "");
-        uint256 amount = 150 * UNIT;
-        uint256 quoted = ido.quote(amount);
-        _contribute(bob, amount);
-        assertEq(nemo.balanceOf(bob), quoted);
     }
 
     function test_importDoesNotPayNemo() public {
@@ -73,11 +33,9 @@ contract NemoAllocationTest is NemoIdoBase {
         ido.importUsers(wallets, codes);
         address[] memory volW = new address[](1);
         uint256[] memory selves = new uint256[](1);
-        uint256[] memory teams = new uint256[](1);
         volW[0] = alice;
         selves[0] = 1000 * UNIT;
-        teams[0] = 0;
-        ido.importVolumes(volW, selves, teams);
+        ido.importVolumes(volW, selves);
         ido.freezeImport();
         ido.openSale();
         vm.stopPrank();
@@ -86,82 +44,153 @@ contract NemoAllocationTest is NemoIdoBase {
         assertEq(ido.totalNemoAllocated(), 0);
     }
 
-    function test_paramChangeAppliesNextDeposit() public {
+    function test_emptyVaultStillMintsOnContribute() public {
         _openSale();
         _register(alice, "ALICE001", "");
-        vm.prank(owner);
-        ido.setNemoSchedule(5000e18, 0, 7 days, 0);
-        assertEq(ido.quote(100 * UNIT), 5000 * UNIT);
+        assertEq(nemo.balanceOf(address(ido)), 0);
         _contribute(alice, 100 * UNIT);
-        assertEq(nemo.balanceOf(alice), 5000 * UNIT);
-    }
-
-    function test_insufficientNemoReverts() public {
-        _openSale();
-        _register(alice, "ALICE001", "");
-        uint256 left = nemo.balanceOf(address(ido));
-        vm.prank(owner);
-        ido.withdrawUnsoldNemo(owner, left);
-        vm.prank(alice);
-        vm.expectRevert(NemoIdo.InsufficientNemo.selector);
-        ido.contribute(100 * UNIT);
+        assertEq(_self(alice), 100 * UNIT);
+        assertEq(nemo.balanceOf(alice), 10_000 * UNIT);
     }
 
     function test_saleOpenedAtStableOnReopen() public {
         _openSale();
         uint256 opened = ido.saleOpenedAt();
+        uint256 openedBlock = ido.saleOpenedBlock();
         vm.prank(owner);
         ido.closeSale();
         vm.warp(block.timestamp + 3 days);
+        vm.roll(block.number + 10);
         vm.prank(owner);
         ido.openSale();
         assertEq(ido.saleOpenedAt(), opened);
+        assertEq(ido.saleOpenedBlock(), openedBlock);
     }
 
-    function test_week2_ceilMatchesQuote() public {
-        _openSale();
-        _register(alice, "ALICE001", "");
-        vm.warp(block.timestamp + 7 days);
-        uint256 amount = 1e18 + 1;
-        uint256 quoted = ido.quote(amount);
-        uint256 per100 = ido.tokensPer100(1);
-        uint256 expected = (amount * per100 + 100e18 - 1) / 100e18;
-        assertEq(quoted, expected);
-        _contribute(alice, amount);
-        assertEq(nemo.balanceOf(alice), quoted);
+    function test_wrongNetworkParamsRevert() public {
+        vm.chainId(56);
+        vm.expectRevert(NemoIdo.WrongNetwork.selector);
+        new NemoIdo(address(usdt), address(nemo), address(nft), owner, NemoNetworks.local());
     }
+
 }
 
 contract NemoTokenTest is Test {
     NemoToken internal token;
     address internal owner = makeAddr("owner");
-    address internal ido = makeAddr("ido");
+    address internal minter = makeAddr("minter");
     address internal alice = makeAddr("alice");
+    address internal bob = makeAddr("bob");
+    address internal campaign = makeAddr("campaign");
 
     function setUp() public {
-        token = new NemoToken(ido, owner);
+        token = new NemoToken(owner);
+        vm.prank(owner);
+        token.setMinter(minter);
     }
 
-    function test_mintsCapToDistribution() public {
+    function test_startsEmptyCapped() public view {
         assertEq(token.name(), "nemokey");
         assertEq(token.symbol(), "NEMOKEY");
-        assertEq(token.totalSupply(), token.CAP());
-        assertEq(token.balanceOf(ido), 500_000_000e18);
-        assertEq(token.balanceOf(owner), 0);
+        assertEq(token.totalSupply(), 0);
+        assertEq(token.CAP(), 1_000_000_000e18);
+        assertEq(token.minter(), minter);
     }
 
-    function test_pauseBlocksTransfer() public {
-        vm.prank(ido);
+    function test_minterCanMint() public {
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+        assertEq(token.balanceOf(alice), 1e18);
+    }
+
+    function test_ownerCanMintCampaignInventory() public {
+        vm.prank(owner);
+        token.mint(campaign, 1000e18);
+        assertEq(token.balanceOf(campaign), 1000e18);
+    }
+
+    function test_strangerMintReverts() public {
+        vm.prank(alice);
+        vm.expectRevert(NemoToken.NotAuthorized.selector);
+        token.mint(alice, 1e18);
+    }
+
+    function test_capExceededReverts() public {
+        uint256 cap = token.CAP();
+        vm.prank(minter);
+        token.mint(alice, cap);
+        vm.prank(minter);
+        vm.expectRevert(NemoToken.CapExceeded.selector);
+        token.mint(alice, 1);
+    }
+
+    function test_plainTransferReverts() public {
+        vm.prank(minter);
+        token.mint(alice, 10e18);
+        vm.prank(alice);
+        vm.expectRevert(NemoToken.TransfersLocked.selector);
+        token.transfer(bob, 1e18);
+
+        vm.prank(alice);
+        token.approve(bob, 1e18);
+        vm.prank(bob);
+        vm.expectRevert(NemoToken.TransfersLocked.selector);
+        token.transferFrom(alice, bob, 1e18);
+    }
+
+    function test_allowlistCampaignCanAirdrop() public {
+        vm.prank(owner);
+        token.mint(campaign, 100e18);
+        vm.prank(owner);
+        token.setTransferAllowlist(campaign, true);
+
+        vm.prank(campaign);
+        token.transfer(alice, 40e18);
+        assertEq(token.balanceOf(alice), 40e18);
+
+        vm.prank(alice);
+        vm.expectRevert(NemoToken.TransfersLocked.selector);
+        token.transfer(bob, 1e18);
+
+        vm.prank(alice);
+        token.transfer(campaign, 10e18);
+        assertEq(token.balanceOf(campaign), 70e18);
+    }
+
+    function test_ownerCanOpenTransfersForEveryone() public {
+        vm.prank(minter);
+        token.mint(alice, 10e18);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        token.setTransfersEnabled(true);
+
+        vm.expectEmit(address(token));
+        emit NemoToken.TransfersEnabledUpdated(true);
+        vm.prank(owner);
+        token.setTransfersEnabled(true);
+        vm.prank(alice);
+        token.transfer(bob, 4e18);
+        assertEq(token.balanceOf(bob), 4e18);
+
+        vm.prank(owner);
+        token.setTransfersEnabled(false);
+        vm.prank(bob);
+        vm.expectRevert(NemoToken.TransfersLocked.selector);
         token.transfer(alice, 1e18);
+        assertEq(token.balanceOf(bob), 4e18);
+    }
+
+    function test_pauseBlocksMint() public {
         vm.prank(owner);
         token.pause();
-        vm.prank(alice);
+        vm.prank(minter);
         vm.expectRevert();
-        token.transfer(ido, 1e18);
+        token.mint(alice, 1e18);
         vm.prank(owner);
         token.unpause();
-        vm.prank(alice);
-        token.transfer(ido, 1e18);
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+        assertEq(token.balanceOf(alice), 1e18);
     }
 
     function test_cannotRescueSelf() public {
