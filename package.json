@@ -27,10 +27,31 @@
     "mint:nemokey": "node scripts/mint-nemokey-testnet.mjs",
     "settle:imported": "node scripts/settle-imported.mjs",
     "settle:historical-team": "node scripts/settle-historical-team.mjs",
-    "rewards:migrate": "node scripts/rewards-migrate-testnet.mjs"
+    "rewards:migrate": "node scripts/rewards-migrate-testnet.mjs",
+    "env:mainnet": "node scripts/env-mainnet.mjs",
+    "db-backup:mainnet": "node scripts/db-backup-mainnet.mjs",
+    "db-migrate:mainnet": "node scripts/db-migrate-mainnet.mjs",
+    "deploy:mainnet": "node scripts/deploy-mainnet.mjs",
+    "verify:mainnet": "node scripts/verify-mainnet-run.mjs",
+    "bscscan:mainnet": "node scripts/bscscan-mainnet.mjs",
+    "import:mainnet": "node scripts/import-mainnet.mjs",
+    "index:mainnet": "node scripts/index-mainnet.mjs",
+    "settle-team:mainnet": "node scripts/settle-team-mainnet.mjs",
+    "publisher:mainnet": "node scripts/publisher-mainnet.mjs",
+    "settle:mainnet": "node scripts/settle-mainnet.mjs",
+    "fund:mainnet": "node scripts/fund-mainnet.mjs",
+    "nft-image:mainnet": "node scripts/nft-image-mainnet.mjs",
+    "handover:mainnet": "node scripts/handover-mainnet.mjs",
+    "sign:mainnet": "node scripts/sign-mainnet.mjs",
+    "vercel:mainnet-preview": "node scripts/vercel-mainnet.mjs --target mainnetpreview",
+    "vercel:mainnet-production": "node scripts/vercel-mainnet.mjs --target production",
+    "publish:mainnet": "node scripts/publish-mainnet.mjs",
+    "verify-root:mainnet": "node scripts/verify-root-mainnet.mjs"
   },
   "dependencies": {
+    "@walletconnect/sign-client": "^2.25.0",
     "pg": "^8.16.3",
+    "qrcode": "^1.5.4",
     "viem": "^2.31.7"
   }
 }

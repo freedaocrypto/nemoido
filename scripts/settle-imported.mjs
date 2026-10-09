@@ -24,6 +24,7 @@ import { parseEnv } from "node:util";
 import {
   createPublicClient,
   createWalletClient,
+  encodeFunctionData,
   formatUnits,
   getAddress,
   http,
@@ -200,7 +201,9 @@ function printInterest(plan) {
 }
 
 async function send(wallet, publicClient, address, abi, functionName, args) {
-  const hash = await wallet.writeContract({ address, abi, functionName, args });
+  const data = encodeFunctionData({ abi, functionName, args });
+  const gas = await publicClient.estimateGas({ account: wallet.account.address, to: address, data });
+  const hash = await wallet.sendTransaction({ to: address, data, gas: (gas * 3n) / 2n });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error(`${functionName} 失败：${hash}`);
   return hash;

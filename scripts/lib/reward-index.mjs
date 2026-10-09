@@ -81,6 +81,84 @@ export function sortLogs(logs) {
   return logs.slice().sort((a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex);
 }
 
+/**
+ * Older chain-56 log nodes, tried after the configured RPC.
+ * Free PublicNode and 1rpc stay off this list: historical eth_getLogs failed there.
+ * Binance dataseed often rejects eth_getLogs, so it is only a fallback.
+ */
+export const MAINNET_LOG_RPCS = [
+  "https://bsc-dataseed.binance.org",
+  "https://rpc-bsc.48.club",
+  "https://bsc.rpc.blxrbdn.com",
+];
+export const MAINNET_LOG_SPAN = 5000n;
+
+/** Host only. A path token is never printed. */
+export function rpcLabel(url) {
+  try {
+    const parsed = new URL(url);
+    const token = parsed.pathname.replace(/^\//, "");
+    if (!token) return parsed.host;
+    return `${parsed.host}（令牌 …${token.slice(-4)}）`;
+  } catch {
+    return "未知节点";
+  }
+}
+
+export function redactRpcSecrets(text) {
+  return String(text ?? "").replace(/https?:\/\/[^\s"'<>]*publicnode\.com\/[A-Za-z0-9]+/gi, (url) => rpcLabel(url));
+}
+
+export function rpcErrorText(error) {
+  const text = [error?.shortMessage, error?.details, error?.message, error?.cause?.details, error?.cause?.message]
+    .filter(Boolean)
+    .join(" | ");
+  return redactRpcSecrets(text || String(error));
+}
+
+/** Prints the node and the error, then the caller tries the next node. */
+export function logRpcFailure(prefix, url, error) {
+  console.error(`${prefix} 节点失败 ${rpcLabel(url)}：${rpcErrorText(error)}。将尝试下一个节点。`);
+  const stack = redactRpcSecrets(error?.stack || "");
+  if (stack) console.error(stack);
+}
+
+/** Primary first. Extra log endpoints only on BSC mainnet, so a testnet index never reads chain 56. */
+export function logRpcCandidates(chainId, primary) {
+  const extra = Number(chainId) === 56 ? MAINNET_LOG_RPCS : [];
+  return [...new Set([primary, ...extra].filter(Boolean))];
+}
+
+function logErrorText(error) {
+  return `${error?.details || ""} ${error?.shortMessage || ""} ${error?.message || ""} ${error?.cause?.details || ""} ${error?.cause?.message || ""}`;
+}
+
+/** True when the range should be split: Binance -32005, or a node that caps eth_getLogs block span. */
+export function isGetLogsLimit(error) {
+  const text = logErrorText(error);
+  return error?.code === -32005 || error?.name === "LimitExceededRpcError" || /limit exceeded/i.test(text) || /exceed maximum block range/i.test(text) || /limited to \d+ - \d+ blocks/i.test(text);
+}
+
+/** PublicNode and similar nodes reject historical logs instead of returning them. Splitting the range does not help. */
+export function isArchiveLogRpc(error) {
+  return /archive requests require|personal token|method eth_getLogs is not supported/i.test(logErrorText(error));
+}
+
+export function isLogRpcTimeout(error) {
+  return error?.name === "TimeoutError" || /timed out|took too long/i.test(logErrorText(error));
+}
+
+/** Inclusive windows. Mainnet log nodes reject spans above MAINNET_LOG_SPAN, so a checkpoint chunk is queried in pieces. */
+export function logQueryWindows(chainId, fromBlock, toBlock) {
+  const span = Number(chainId) === 56 ? MAINNET_LOG_SPAN : toBlock - fromBlock + 1n;
+  const windows = [];
+  for (let cursor = fromBlock; cursor <= toBlock; cursor += span) {
+    const end = cursor + span - 1n;
+    windows.push({ from: cursor, to: end > toBlock ? toBlock : end });
+  }
+  return windows;
+}
+
 /** Next inclusive block range. `lastBlock === null` means no checkpoint yet, so start at `startBlock`. */
 export function planChunk({ lastBlock, startBlock, safeHead, chunkBlocks }) {
   const from = lastBlock == null ? startBlock : lastBlock + 1n;

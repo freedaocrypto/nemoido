@@ -32,3 +32,5 @@ crytic-export/
 .env.mainnet.*
 !.env.mainnet.example
 *.dump
+mainnet-run/
+mainnet-run-rehearsal/

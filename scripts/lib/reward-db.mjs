@@ -152,15 +152,21 @@ export async function loadAccounts(client, chainId, idoAddress) {
 export async function saveIndex(client, { chainId, idoAddress, rewardsAddress, lastBlock, rows }) {
   await client.query("BEGIN");
   try {
-    await client.query(
+    const advanced = await client.query(
       `INSERT INTO nemo_indexer_state (chain_id, ido_address, rewards_address, last_block)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (chain_id, ido_address)
        DO UPDATE SET rewards_address = EXCLUDED.rewards_address,
                      last_block = EXCLUDED.last_block,
-                     updated_at = now()`,
+                     updated_at = now()
+       WHERE nemo_indexer_state.last_block < EXCLUDED.last_block
+       RETURNING last_block`,
       [chainId, idoAddress, rewardsAddress, lastBlock],
     );
+    if (advanced.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return false;
+    }
     for (const row of rows) {
       await client.query(
         `INSERT INTO nemo_team_account
@@ -188,6 +194,7 @@ export async function saveIndex(client, { chainId, idoAddress, rewardsAddress, l
       );
     }
     await client.query("COMMIT");
+    return true;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

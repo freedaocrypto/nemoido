@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyLog, accountRows, emptyIndexState, formatDuration, formatIndexProgress, planChunk } from "./reward-index.mjs";
+import { applyLog, accountRows, emptyIndexState, formatDuration, formatIndexProgress, isArchiveLogRpc, isGetLogsLimit, isLogRpcTimeout, logQueryWindows, logRpcCandidates, planChunk } from "./reward-index.mjs";
 
 const A = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const B = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
@@ -88,6 +88,30 @@ test("claim records the cumulative already withdrawn", () => {
     args: { account: A, cumulative: 30n * UNIT, paid: 30n * UNIT },
   });
   assert.equal(accountRows(state)[0].claimedWei, 30n * UNIT);
+});
+
+test("mainnet log queries keep a getLogs endpoint behind the configured RPC", () => {
+  const primary = "https://bsc-rpc.publicnode.com/0123456789abcdef0123456789abcdef";
+  const mainnet = logRpcCandidates(56, primary);
+  assert.deepEqual(mainnet, [
+    primary,
+    "https://bsc-dataseed.binance.org",
+    "https://rpc-bsc.48.club",
+    "https://bsc.rpc.blxrbdn.com",
+  ]);
+  assert.equal(mainnet.includes("https://1rpc.io/bnb"), false);
+  assert.equal(mainnet.includes("https://bsc.publicnode.com"), false);
+  assert.equal(logRpcCandidates(56, "https://bsc-dataseed.binance.org").filter((url) => url === "https://bsc-dataseed.binance.org").length, 1);
+  assert.deepEqual(logQueryWindows(56, 100n, 12000n).map((window) => [window.from, window.to]), [[100n, 5099n], [5100n, 10099n], [10100n, 12000n]]);
+  assert.deepEqual(logQueryWindows(97, 100n, 12000n), [{ from: 100n, to: 12000n }]);
+  assert.equal(isLogRpcTimeout({ name: "TimeoutError", details: "The request timed out." }), true);
+  assert.deepEqual(logRpcCandidates(97, primary), [primary]);
+  assert.equal(isGetLogsLimit({ code: -32005, details: "limit exceeded" }), true);
+  assert.equal(isGetLogsLimit({ code: -32000, message: "exceed maximum block range: 5000" }), true);
+  assert.equal(isGetLogsLimit({ code: -32602, details: "eth_getLogs is limited to 0 - 50 blocks range" }), true);
+  assert.equal(isGetLogsLimit({ shortMessage: "HTTP request failed." }), false);
+  assert.equal(isArchiveLogRpc({ code: -32602, details: "Archive requests require a personal token." }), true);
+  assert.equal(isGetLogsLimit({ code: -32602, details: "Archive requests require a personal token." }), false);
 });
 
 test("deposits before the switch block stay on the old tiers", () => {
