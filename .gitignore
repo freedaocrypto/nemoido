@@ -34,3 +34,9 @@ crytic-export/
 *.dump
 mainnet-run/
 mainnet-run-rehearsal/
+
+# Internal audit reports and tests that name database hosts; local only
+SECURITY-AUDIT*.md
+test/audit/
+scripts/lib/mainnet.test.mjs
+scripts/lib/testnet-ops.test.mjs
